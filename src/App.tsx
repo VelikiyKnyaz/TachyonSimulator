@@ -38,12 +38,29 @@ export default function App() {
           <div className="empty-state glass-panel" style={{
             position: 'absolute', top: '50%', left: '50%', 
             transform: 'translate(-50%, -50%)', padding: '2.5rem',
-            textAlign: 'center', zIndex: 10, maxWidth: '400px'
+            textAlign: 'center', zIndex: 10, maxWidth: '400px',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)'
           }}>
-            <h2 style={{ color: 'var(--accent-hover)' }}>Arena Sandbox Ready</h2>
-            <p style={{ marginTop: '1rem', lineHeight: '1.6' }}>
-              Drag and drop your Maya exported <code>.obj</code>, <code>.fbx</code>, or <code>.glb</code> model to initialize the environment.
+            <h2 style={{ color: 'var(--accent-hover)', marginBottom: '1rem' }}>Arena Sandbox Ready</h2>
+            <p style={{ lineHeight: '1.6', marginBottom: '1.5rem', color: 'var(--text-secondary)' }}>
+              Drag and drop an <code>.obj</code>, <code>.fbx</code>, or <code>.glb</code> model, or select a default procedural arena below:
             </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <button 
+                className="btn-secondary" 
+                onClick={() => setArenaModel({ url: 'procedural', type: 'flattened-bowl' })}
+                style={{ padding: '0.75rem', width: '100%', cursor: 'pointer', border: '1px solid var(--accent)' }}
+              >
+                Load Flattened Bowl
+              </button>
+              <button 
+                className="btn-secondary" 
+                onClick={() => setArenaModel({ url: 'procedural', type: 'skatepark' })}
+                style={{ padding: '0.75rem', width: '100%', cursor: 'pointer', border: '1px solid var(--accent)' }}
+              >
+                Load Skatepark
+              </button>
+            </div>
           </div>
         )}
 

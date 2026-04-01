@@ -114,7 +114,62 @@ function ArenaGLTF({ url }: { url: string }) {
   return <ArenaScene scene={gltf.scene} />;
 }
 
+function ProceduralFlattenedBowl() {
+  const scene = useMemo(() => {
+    const geo = new THREE.PlaneGeometry(300, 300, 150, 150);
+    geo.rotateX(-Math.PI / 2);
+    const pos = geo.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i);
+      const z = pos.getZ(i);
+      const y = 0.0000002 * (Math.pow(x, 4) + Math.pow(z, 4));
+      pos.setY(i, y);
+    }
+    geo.computeVertexNormals();
+    const mesh = new THREE.Mesh(geo);
+    const group = new THREE.Group();
+    group.add(mesh);
+    return group;
+  }, []);
+
+  return <ArenaScene scene={scene} />;
+}
+
+function ProceduralSkatepark() {
+  const scene = useMemo(() => {
+    const geo = new THREE.PlaneGeometry(300, 300, 150, 150);
+    geo.rotateX(-Math.PI / 2);
+    const pos = geo.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i);
+      const z = pos.getZ(i);
+      
+      const baseY = 0.0000002 * (Math.pow(x, 4) + Math.pow(z, 4));
+      
+      const spine = 12 * Math.exp(-(z * z) / 200) * Math.exp(-(x * x) / 5000);
+      const volcano1 = 18 * Math.exp(-((x - 60) ** 2 + (z - 60) ** 2) / 400);
+      const volcano2 = 18 * Math.exp(-((x + 60) ** 2 + (z - 60) ** 2) / 400);
+      const volcano3 = 18 * Math.exp(-((x - 60) ** 2 + (z + 60) ** 2) / 400);
+      const volcano4 = 18 * Math.exp(-((x + 60) ** 2 + (z + 60) ** 2) / 400);
+      
+      // Add a central crater to contrast the spine
+      const crater = -10 * Math.exp(-(x * x + z * z) / 400);
+
+      pos.setY(i, baseY + spine + volcano1 + volcano2 + volcano3 + volcano4 + crater);
+    }
+    geo.computeVertexNormals();
+    const mesh = new THREE.Mesh(geo);
+    const group = new THREE.Group();
+    group.add(mesh);
+    return group;
+  }, []);
+
+  return <ArenaScene scene={scene} />;
+}
+
 export function Arena({ url, fileType }: { url: string, fileType: string }) {
+  if (fileType === 'flattened-bowl') return <ProceduralFlattenedBowl />;
+  if (fileType === 'skatepark') return <ProceduralSkatepark />;
   if (fileType === 'obj') return <ArenaOBJ url={url} />;
   if (fileType === 'fbx') return <ArenaFBX url={url} />;
   return <ArenaGLTF url={url} />;

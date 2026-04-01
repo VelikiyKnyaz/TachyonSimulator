@@ -57,7 +57,8 @@ export function Projectile({ id, position, direction, speed, ownerId, onHit }: {
     }
 
     // Out of bounds cleanup (Optimization)
-    if (pos.y < -50) {
+    // Destruir poco tiempo después de salir de la zona concava-plana
+    if (pos.y < -50 || pos.y > 150 || Math.abs(pos.x) > 150 || Math.abs(pos.z) > 150) {
         dead.current = true;
         return;
     }
