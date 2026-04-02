@@ -12,6 +12,8 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
     lookAheadDist, setLookAheadDist,
     centripetalGrip, setCentripetalGrip,
     baseFriction, setBaseFriction,
+    turnPenaltyMinSpeed, setTurnPenaltyMinSpeed,
+    turnPenaltyMaxSpeed, setTurnPenaltyMaxSpeed,
     showNoses, toggleNoses,
     showStateLabels, toggleStateLabels,
     showDeathMarkers, toggleDeathMarkers,
@@ -20,12 +22,16 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
     debugSize, setDebugSize,
     motorPower, setMotorPower,
     maxTurnRateDeg, setMaxTurnRateDeg,
-    dogfightCone, setDogfightCone,
     huntConeCone, setHuntConeCone,
     fireRateDelay, setFireRateDelay,
     overheatCooldown, setOverheatCooldown,
     projectileSpeed, setProjectileSpeed,
-    baseHealth, setBaseHealth
+    baseHealth, setBaseHealth,
+    evasionCpaRadius, setEvasionCpaRadius,
+    radarRadius, setRadarRadius,
+    radarFrontalLength, setRadarFrontalLength,
+    radarFrontalAngle, setRadarFrontalAngle,
+    initialSpeed, setInitialSpeed
   } = useSimulationStore();
   
   return (
@@ -177,14 +183,24 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
                   <input type="range" className="slider" min="5" max="100" step="1" value={motorPower} onChange={(e) => setMotorPower(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
 
                   <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
-                    <span>Cruise Speed (m/s)</span><span style={{ fontWeight: 'bold', color: 'var(--warning)' }}>{maxSpeedCap.toFixed(1)}</span>
+                    <span>Launch Speed (m/s)</span><span style={{ fontWeight: 'bold' }}>{initialSpeed.toFixed(0)}</span>
                   </label>
-                  <input type="range" className="slider" min="10" max="500" step="5" value={maxSpeedCap} onChange={(e) => setMaxSpeedCap(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
+                  <input type="range" className="slider" min="0" max="500" step="10" value={initialSpeed} onChange={(e) => setInitialSpeed(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
 
                   <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
                     <span>Turn Penalty (Brake)</span><span style={{ fontWeight: 'bold', color: 'var(--danger)' }}>{turnPenalty.toFixed(2)}x</span>
                   </label>
                   <input type="range" className="slider" min="0.0" max="4.0" step="0.1" value={turnPenalty} onChange={(e) => setTurnPenalty(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
+
+                  <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
+                    <span>Aero Brake Min (m/s)</span><span style={{ fontWeight: 'bold' }}>{turnPenaltyMinSpeed.toFixed(0)}</span>
+                  </label>
+                  <input type="range" className="slider" min="0.0" max="250.0" step="5" value={turnPenaltyMinSpeed} onChange={(e) => setTurnPenaltyMinSpeed(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
+
+                  <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
+                    <span>Aero Brake Max (m/s)</span><span style={{ fontWeight: 'bold' }}>{turnPenaltyMaxSpeed.toFixed(0)}</span>
+                  </label>
+                  <input type="range" className="slider" min="10.0" max="500.0" step="5" value={turnPenaltyMaxSpeed} onChange={(e) => setTurnPenaltyMaxSpeed(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
 
                   <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
                     <span>Centripetal Grip</span><span style={{ fontWeight: 'bold' }}>{centripetalGrip.toFixed(2)}</span>
@@ -208,6 +224,21 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
                   <input type="range" className="slider" min="0.05" max="1.0" step="0.05" value={lookAheadDist} onChange={(e) => setLookAheadDist(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
 
                   <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
+                    <span>Radar Range Global (m)</span><span style={{ fontWeight: 'bold' }}>{radarRadius.toFixed(0)}</span>
+                  </label>
+                  <input type="range" className="slider" min="50" max="1000" step="50" value={radarRadius} onChange={(e) => setRadarRadius(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
+                  
+                  <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
+                    <span>Radar Frontal Range (m)</span><span style={{ fontWeight: 'bold' }}>{radarFrontalLength.toFixed(0)}</span>
+                  </label>
+                  <input type="range" className="slider" min="50" max="1000" step="50" value={radarFrontalLength} onChange={(e) => setRadarFrontalLength(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
+
+                  <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
+                    <span>Radar Frontal Cone</span><span style={{ fontWeight: 'bold' }}>{Math.round(Math.acos(radarFrontalAngle) * 180 / Math.PI * 2)}°</span>
+                  </label>
+                  <input type="range" className="slider" min="-1.0" max="1.0" step="0.05" value={radarFrontalAngle} onChange={(e) => setRadarFrontalAngle(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
+
+                  <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
                     <span>Evade U-Turn (pi)</span><span style={{ fontWeight: 'bold' }}>{evasionTurnAngle.toFixed(2)}π</span>
                   </label>
                   <input type="range" className="slider" min="0.1" max="1.5" step="0.05" value={evasionTurnAngle} onChange={(e) => setEvasionTurnAngle(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
@@ -216,11 +247,6 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
                     <span>Max Turn Rate (deg/s)</span><span style={{ fontWeight: 'bold', color: 'var(--warning)' }}>{maxTurnRateDeg.toFixed(0)}°</span>
                   </label>
                   <input type="range" className="slider" min="30" max="720" step="10" value={maxTurnRateDeg} onChange={(e) => setMaxTurnRateDeg(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
-
-                  <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
-                    <span>Dogfight Vision Cone</span><span style={{ fontWeight: 'bold', color: '#ef4444' }}>{(Math.acos(dogfightCone) * 180 / Math.PI).toFixed(0)}°</span>
-                  </label>
-                  <input type="range" className="slider" min="0.0" max="0.95" step="0.05" value={dogfightCone} onChange={(e) => setDogfightCone(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
                 </div>
               </details>
 
@@ -251,7 +277,12 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
                   <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
                     <span>Proj. Speed (m/s)</span><span style={{ fontWeight: 'bold' }}>{projectileSpeed.toFixed(0)}</span>
                   </label>
-                  <input type="range" className="slider" min="50" max="300" step="10" value={projectileSpeed} onChange={(e) => setProjectileSpeed(parseFloat(e.target.value))} style={{ width: '100%' }} />
+                  <input type="range" className="slider" min="50" max="300" step="10" value={projectileSpeed} onChange={(e) => setProjectileSpeed(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
+
+                  <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
+                    <span>Evasion CPA Radius</span><span style={{ fontWeight: 'bold', color: '#38bdf8' }}>{evasionCpaRadius.toFixed(1)}</span>
+                  </label>
+                  <input type="range" className="slider" min="1.0" max="15.0" step="0.5" value={evasionCpaRadius} onChange={(e) => setEvasionCpaRadius(parseFloat(e.target.value))} style={{ width: '100%' }} />
                 </div>
               </details>
 

@@ -8,6 +8,7 @@ import { Arena } from './components/Arena';
 import { BoidSwarm } from './components/BoidSwarm';
 import { CameraFollower } from './components/CameraFollower';
 import { BoidInfoPanel } from './components/BoidInfoPanel';
+import { Leaderboard } from './components/Leaderboard';
 import { useSimulationStore } from './store';
 
 export default function App() {
@@ -80,6 +81,7 @@ export default function App() {
         </Canvas>
 
         {(arenaModel || isRunning) && <Dashboard />}
+        {isRunning && <Leaderboard />}
         <BoidInfoPanel />
       </main>
     </div>

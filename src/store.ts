@@ -41,7 +41,7 @@ export const simMetrics: SimulationMetrics = {
 
 interface SimulationStore {
   boids: string[]; // List of unique Boid IDs
-  projectiles: {id: string, pos: {x:number, y:number, z:number}, dir: {x:number, y:number, z:number}, speed: number, ownerId: string}[];
+  projectiles: {id: string, pos: {x:number, y:number, z:number}, dir: {x:number, y:number, z:number}, speed: number, ownerId: string, shooterSpeed: number}[];
   isRunning: boolean;
   agentCount: number;
   showCurvature: boolean;
@@ -53,6 +53,8 @@ interface SimulationStore {
   lookAheadDist: number;
   centripetalGrip: number;
   baseFriction: number;
+  turnPenaltyMinSpeed: number;
+  turnPenaltyMaxSpeed: number;
   
   // --- New Advanced Parameters ---
   showNoses: boolean;
@@ -63,13 +65,18 @@ interface SimulationStore {
   debugSize: number;
   motorPower: number;
   maxTurnRateDeg: number;
-  dogfightCone: number;     // Vision cone dot product for dogfight initiation (0=180°, 1=0°)
   
   baseHealth: number;
   huntConeCone: number;
   fireRateDelay: number;
   overheatCooldown: number;
   projectileSpeed: number;
+  evasionCpaRadius: number;
+  
+  radarRadius: number;
+  radarFrontalLength: number;
+  radarFrontalAngle: number;
+  initialSpeed: number;
   
   setAgentCount: (count: number) => void;
   setArenaScale: (scale: number) => void;
@@ -82,17 +89,24 @@ interface SimulationStore {
   setLookAheadDist: (v: number) => void;
   setCentripetalGrip: (v: number) => void;
   setBaseFriction: (v: number) => void;
+  setTurnPenaltyMinSpeed: (v: number) => void;
+  setTurnPenaltyMaxSpeed: (v: number) => void;
 
   setDebugSize: (v: number) => void;
   setMotorPower: (v: number) => void;
   setMaxTurnRateDeg: (v: number) => void;
-  setDogfightCone: (v: number) => void;
   
   setBaseHealth: (v: number) => void;
   setHuntConeCone: (v: number) => void;
   setFireRateDelay: (v: number) => void;
   setOverheatCooldown: (v: number) => void;
   setProjectileSpeed: (v: number) => void;
+  setEvasionCpaRadius: (v: number) => void;
+  
+  setRadarRadius: (v: number) => void;
+  setRadarFrontalLength: (v: number) => void;
+  setRadarFrontalAngle: (v: number) => void;
+  setInitialSpeed: (v: number) => void;
   
   startSimulation: () => void;
   resetSimulation: () => void;
@@ -118,12 +132,14 @@ export const useSimulationStore = create<SimulationStore>((set) => ({
   crashTolerance: 0.45,
   
   // Default values copied from user preferences
-  maxSpeedCap: 200.0,
-  turnPenalty: 1.0,
+  maxSpeedCap: 500.0,
+  turnPenalty: 0.5,
   evasionTurnAngle: 0.5,
   lookAheadDist: 1.0,
   centripetalGrip: 1.0,
   baseFriction: 2.0,
+  turnPenaltyMinSpeed: 20.0,
+  turnPenaltyMaxSpeed: 70.0,
 
   showNoses: false,
   showStateLabels: true,
@@ -133,13 +149,18 @@ export const useSimulationStore = create<SimulationStore>((set) => ({
   debugSize: 3.0,
   motorPower: 12.0,
   maxTurnRateDeg: 120.0,
-  dogfightCone: 0.3,       // ~72° forward cone
   
   baseHealth: 500.0,
   huntConeCone: 0.5,
   fireRateDelay: 0.1,
   overheatCooldown: 5.0,
   projectileSpeed: 120.0,
+  evasionCpaRadius: 5.0,
+  
+  radarRadius: 100.0,
+  radarFrontalLength: 250.0,
+  radarFrontalAngle: 0.5,
+  initialSpeed: 50.0,
 
   setAgentCount: (count) => set({ agentCount: count }),
   setArenaScale: (scale) => set({ arenaScale: scale }),
@@ -148,20 +169,27 @@ export const useSimulationStore = create<SimulationStore>((set) => ({
   setMaxSpeedCap: (v) => set({ maxSpeedCap: v }),
   setTurnPenalty: (v) => set({ turnPenalty: v }),
   setEvasionTurnAngle: (v) => set({ evasionTurnAngle: v }),
-  setLookAheadDist: (v) => set({ lookAheadDist: v }),
-  setCentripetalGrip: (v) => set({ centripetalGrip: v }),
-  setBaseFriction: (v) => set({ baseFriction: v }),
+  setLookAheadDist: (v: number) => set({ lookAheadDist: v }),
+  setCentripetalGrip: (v: number) => set({ centripetalGrip: v }),
+  setBaseFriction: (v: number) => set({ baseFriction: v }),
+  setTurnPenaltyMinSpeed: (v: number) => set({ turnPenaltyMinSpeed: v }),
+  setTurnPenaltyMaxSpeed: (v: number) => set({ turnPenaltyMaxSpeed: v }),
 
   setDebugSize: (v) => set({ debugSize: v }),
   setMotorPower: (v) => set({ motorPower: v }),
   setMaxTurnRateDeg: (v) => set({ maxTurnRateDeg: v }),
-  setDogfightCone: (v) => set({ dogfightCone: v }),
   
   setBaseHealth: (v) => set({ baseHealth: v }),
   setHuntConeCone: (v) => set({ huntConeCone: v }),
   setFireRateDelay: (v) => set({ fireRateDelay: v }),
   setOverheatCooldown: (v) => set({ overheatCooldown: v }),
   setProjectileSpeed: (v) => set({ projectileSpeed: v }),
+  setEvasionCpaRadius: (v) => set({ evasionCpaRadius: v }),
+  
+  setRadarRadius: (v) => set({ radarRadius: v }),
+  setRadarFrontalLength: (v) => set({ radarFrontalLength: v }),
+  setRadarFrontalAngle: (v) => set({ radarFrontalAngle: v }),
+  setInitialSpeed: (v) => set({ initialSpeed: v }),
   
   toggleCurvature: () => set((state) => ({ showCurvature: !state.showCurvature })),
   toggleNoses: () => set((state) => ({ showNoses: !state.showNoses })),

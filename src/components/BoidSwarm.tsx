@@ -84,12 +84,17 @@ export function BoidSwarm() {
           const proj = useSimulationStore.getState().projectiles.find(p => p.id === projId);
           if (proj) {
               const shooterId = proj.ownerId;
-              simMetrics.hits++;
-              
-              // Apply 25 damage per hit to the boid's health pool
-              const currentHp = simMetrics.boidHealths.get(targetBoidId) ?? useSimulationStore.getState().baseHealth;
-              const newHp = currentHp - 25;
-              simMetrics.boidHealths.set(targetBoidId, newHp);
+               simMetrics.hits++;
+               
+               // Speed-scaled damage: faster shooter = more devastating hits
+               // Base 10 damage at 0 speed, up to 50 at maxSpeedCap
+               const maxSpeedCap = useSimulationStore.getState().maxSpeedCap;
+               const speedFactor = Math.min(1.0, (proj.shooterSpeed || 0) / maxSpeedCap);
+               const damage = 10 + speedFactor * 40; // 10 at standstill, 50 at max speed
+               
+               const currentHp = simMetrics.boidHealths.get(targetBoidId) ?? useSimulationStore.getState().baseHealth;
+               const newHp = currentHp - damage;
+               simMetrics.boidHealths.set(targetBoidId, newHp);
               
               if (newHp <= 0) {
                   // The Boid will naturally evaluate this and respawn / leave a marker on its next frame
