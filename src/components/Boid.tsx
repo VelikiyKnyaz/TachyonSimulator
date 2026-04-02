@@ -175,7 +175,18 @@ export function Boid({ id, index }: { id: string, index: number }) {
 
     // Marble's current rolling direction (Default to intended direction if stopped)
     const speedRatio = speed / settings.maxSpeedCap; // 0-1 proportion of max speed
-    const direction = speedRatio > 0.03 ? (isGrounded ? rawVel.clone().sub(_surfaceNormal.clone().multiplyScalar(rawVel.dot(_surfaceNormal))).normalize() : rawVel.clone().normalize()) : targetDir.current.clone().normalize();
+    
+    // Safely extract the tangent velocity. If magnitude is 0, .normalize() creates NaN!
+    let activeDirection = targetDir.current.clone().normalize();
+    if (speedRatio > 0.03) {
+        if (isGrounded) {
+             const tanVel = rawVel.clone().sub(_surfaceNormal.clone().multiplyScalar(rawVel.dot(_surfaceNormal)));
+             if (tanVel.lengthSq() > 0.0001) activeDirection = tanVel.normalize();
+        } else {
+             if (rawVel.lengthSq() > 0.0001) activeDirection = rawVel.clone().normalize();
+        }
+    }
+    const direction = activeDirection;
 
     simMetrics.boidSpeeds.set(id, speed);
     simMetrics.boidVelocities.set(id, { x: rawVel.x, y: rawVel.y, z: rawVel.z });
@@ -313,24 +324,20 @@ export function Boid({ id, index }: { id: string, index: number }) {
             // Two doctrines: CRUISE (stable gliding) and HUNT (combat).
             
             if (aiState.current === 'HUNT') {
-                // Chasing target, bleeding speed on turns.
-                // Exit when speed drops below personality threshold.
-                const huntExitThreshold = 0.80 - aiStats.combatPersistence * 0.50;
-                if (speedRatio < huntExitThreshold) {
+                // Exit combat randomly if persistence is low 
+                if (Math.random() < ((1.0 - aiStats.combatPersistence) * delta * 0.2)) {
                     aiState.current = 'CRUISE';
                 }
             }
        }
-
        
        let targetWeight = 0;
        
-       // 3. HUNT — Reachable from ANY non-EVADE state, BUT requires vision cone
+       // 3. HUNT — Reachable from ANY non-EVADE state
        let isDogfighting = false;
-       const huntExitThreshold = 0.80 - aiStats.combatPersistence * 0.50;
-       const canEnterDogfight = aiState.current !== 'EVADE' && speedRatio >= huntExitThreshold;
+       const canEnterDogfight = aiState.current !== 'EVADE';
        if ((aiState.current === 'HUNT' || canEnterDogfight)) {
-           let nearestDist = 100000; 
+           let nearestDist = Infinity; 
            let targetPos: {x:number, y:number, z:number} | null = null;
             let nearestId = '';
             
@@ -470,17 +477,18 @@ export function Boid({ id, index }: { id: string, index: number }) {
 
        // If the boid is actively executing an AI turning command
        if (turnStress > 0.01) {
-           // We scale up the slider slightly so it's guaranteed to be noticeable
            const penaltyStrength = settings.turnPenalty * 1.5; 
            
-           // 1. Aerodynamic Bleed: Actively strip away their momentum based on how hard they are turning
-           const velocityBleed = Math.max(0.5, 1.0 - (turnStress * delta * penaltyStrength));
-           newVel.multiplyScalar(velocityBleed);
-           hasVelChange = true;
-           
-           // 2. Engine Stall: Crucial fix. If we only sap their speed, the 600N Engine thrust instantly repowers them. 
-           // We must dramatically cut the throttle (targetWeight) because the thrusters are pointing sideways!
-           targetWeight *= Math.max(0.0, 1.0 - (turnStress * penaltyStrength));
+           // ONLY apply penalties if NOT in Panic Evasion. Fleeing boids push their engines to the limit.
+           if (aiState.current !== 'EVADE') {
+               // 1. Aerodynamic Bleed: Actively strip away their momentum based on how hard they are turning
+               const velocityBleed = Math.max(0.5, 1.0 - (turnStress * delta * penaltyStrength));
+               newVel.multiplyScalar(velocityBleed);
+               hasVelChange = true;
+               
+               // 2. Engine Stall: Dramatically cut the throttle because the thrusters are pointing sideways!
+               targetWeight *= Math.max(0.0, 1.0 - (turnStress * penaltyStrength));
+           }
        }
 
        // --- SURFACE TANGENT PLANE VELOCITY PROJECTION ---
@@ -501,7 +509,13 @@ export function Boid({ id, index }: { id: string, index: number }) {
        }
 
        // Strict Physical Turn Rate Constraint
-       const maxAngleToTurn = settings.maxTurnRateDeg * (Math.PI / 180) * delta;
+       let maxAngleToTurn = settings.maxTurnRateDeg * (Math.PI / 180) * delta;
+       
+       // Reflex Boost: Defensive Panic Evasion must snap sharply, bypassing standard turn rates
+       if (aiState.current === 'EVADE') {
+            maxAngleToTurn *= 4.0;
+       }
+
        const angleToIdeal = _targetDir.angleTo(_idealDir);
 
        if (angleToIdeal > 0.001) {
