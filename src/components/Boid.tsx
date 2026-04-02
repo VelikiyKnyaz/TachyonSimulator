@@ -12,7 +12,7 @@ const _rayOrigin = new THREE.Vector3();
 const _lidarOrigin = new THREE.Vector3();
 const _surfaceNormal = new THREE.Vector3(0, 1, 0);
 
-type BoidState = 'CRUISE' | 'BNZ_CLIMB' | 'BNZ_DIVE' | 'DOGFIGHT' | 'EVADE';
+type BoidState = 'CRUISE' | 'HUNT' | 'EVADE';
 
 export function Boid({ id, index }: { id: string, index: number }) {
   const bodyRef = useRef<RapierRigidBody>(null);
@@ -21,7 +21,9 @@ export function Boid({ id, index }: { id: string, index: number }) {
   const { rapier, world } = useRapier();
   const prevNormal = useRef(new THREE.Vector3(0, 1, 0));
   const aiState = useRef<BoidState>('CRUISE');
+  const vendettaTargetId = useRef<string | null>(null);
   const evadeSpinDir = useRef<number>(1); // 1 = Left, -1 = Right
+  const evadeTargetDir = useRef(new THREE.Vector3()); 
   const fireCooldown = useRef(0); // Used for Overheat cooldown
   const heat = useRef(0);         // Used for Machine-gun burst
   const wasGrounded = useRef(false);
@@ -40,26 +42,14 @@ export function Boid({ id, index }: { id: string, index: number }) {
   const aiStats = useMemo(() => {
     // Core personality axes (0-1 range)
     const aggression = Math.random();          // 0 = pacifist, 1 = warlord
-    const bnzIntensity = Math.random();        // 0 = gentle BnZ (small climbs), 1 = extreme BnZ (massive climbs)
     const combatPersistence = Math.random();   // 0 = fire-and-forget, 1 = relentless pursuer
     const riskTolerance = 0.3 + Math.random() * 0.7;
     
     return {
       aggression,
-      bnzIntensity,
       combatPersistence,
       riskTolerance,
       evasionDir: Math.random() > 0.5 ? 1 : -1,
-      // BnZ climb depth: how much speed the boid sacrifices climbing before diving.
-      // Low intensity (0): climb until speedRatio=0.60 (abort early, shallow climb)
-      // High intensity (1): climb until speedRatio=0.20 (push climb until almost stalling, maximum peak altitude!)
-      bnzClimbDepth: 0.60 - bnzIntensity * 0.40,
-      // BnZ initiation chance: how eagerly the boid enters BnZ from cruise
-      bnzEagerness: 0.2 + bnzIntensity * 0.8,    // 0.2 to 1.0
-      // Dogfight exit threshold: at what speedRatio the boid gives up the chase
-      // Low persistence (0): exits dogfight at speedRatio=0.80 (quickly returns to own dynamics)
-      // High persistence (1): exits dogfight at speedRatio=0.30 (chases until almost stalled)
-      dogfightExitRatio: 0.80 - combatPersistence * 0.50,
       color: BOID_COLORS[index % BOID_COLORS.length]
     };
   }, [index]);
@@ -68,10 +58,8 @@ export function Boid({ id, index }: { id: string, index: number }) {
   useMemo(() => {
     simMetrics.boidPersonalities.set(id, {
       aggression: aiStats.aggression,
-      energyStyle: aiStats.bnzIntensity,
+      combatPersistence: aiStats.combatPersistence,
       riskTolerance: aiStats.riskTolerance,
-      diveFraction: aiStats.bnzClimbDepth,
-      climbFraction: aiStats.dogfightExitRatio
     });
   }, [id, aiStats]);
 
@@ -154,7 +142,7 @@ export function Boid({ id, index }: { id: string, index: number }) {
     _surfaceNormal.copy(gravityDir.negate());
 
     if (hit && hit.collider && hit.collider.parent() !== body) {
-      const toi = hit.toi !== undefined ? hit.toi : (hit as any).timeOfImpact;
+      const toi = (hit as any).toi !== undefined ? (hit as any).toi : (hit as any).timeOfImpact;
       // Radius of Ball is 0.5. Toi < 0.8 accounts for small bumps ensuring continuous grip
       if (typeof toi === 'number' && !isNaN(toi) && toi < 0.8) {
         isGrounded = true;
@@ -223,10 +211,14 @@ export function Boid({ id, index }: { id: string, index: number }) {
        wasGrounded.current = true;
 
        // --- Lidar Edge Avoidance (Dynamic Terrain Safe) ---
-       // Reduced scaling so they don't get false cliff scares halfway up walls at high speeds!
-       const lookAheadDist = Math.max(speed * (settings.lookAheadDist * 0.1), settings.maxSpeedCap * 0.06);
+       // CRUCIAL: Boids require physical space to execute a turn. We map the warning distance to their turning radius!
+       const maxTurnRateRad = settings.maxTurnRateDeg * (Math.PI / 180);
+       const physicalTurnRadius = speed / Math.max(0.1, maxTurnRateRad); 
+       // We use the slider (0.05 to 1.0) as a multiplier against the true required space.
+       const lookAheadDist = Math.max(physicalTurnRadius * (settings.lookAheadDist * 1.5), speed * 0.1);
+       
        _lidarOrigin.copy(pos).add(direction.clone().multiplyScalar(lookAheadDist));
-       // CRUCIAL MATH FIX: Elevate the Lidar 10 meters perpendicular to the surface BEFORE shooting back down!
+       // Elevate the Lidar 10 meters perpendicular to the surface BEFORE shooting back down!
        _lidarOrigin.add(_surfaceNormal.clone().multiplyScalar(10.0));
        
        const lidarRay = new rapier.Ray(_lidarOrigin, _surfaceNormal.clone().negate());
@@ -256,83 +248,115 @@ export function Boid({ id, index }: { id: string, index: number }) {
                const leftHit = world.castRay(new rapier.Ray(leftOrigin, _surfaceNormal.clone().negate()), 20.0, true, undefined, interactionGroups(0, [0]), undefined, body as any);
                const rightHit = world.castRay(new rapier.Ray(rightOrigin, _surfaceNormal.clone().negate()), 20.0, true, undefined, interactionGroups(0, [0]), undefined, body as any);
                
-               if (leftHit && !rightHit) evadeSpinDir.current = 1;
-               else if (rightHit && !leftHit) evadeSpinDir.current = -1;
-               else evadeSpinDir.current = 1;
-           }
+                if (leftHit && !rightHit) evadeSpinDir.current = 1;
+                else if (rightHit && !leftHit) evadeSpinDir.current = -1;
+                else evadeSpinDir.current = Math.random() > 0.5 ? 1 : -1;
+                
+                // Immediately lock in a 120-degree escape coordinate on the surface relative to where we currently face!
+                // This prevents the mathematical trap where _targetDir chasing _idealDir creates an infinite circle.
+                evadeTargetDir.current.copy(_targetDir).applyAxisAngle(_surfaceNormal, evadeSpinDir.current * (Math.PI / 1.5)).normalize();
+            }
         } else {
-            // SAFE AHEAD!
-            if (aiState.current === 'EVADE') {
-                if (hasSlope) {
-                   aiState.current = 'BNZ_DIVE'; // Plunge beautifully back into the bowl from the upper rim!
+            // SAFE FROM TERRAIN!
+            
+            // --- BULLET EVASION / COUNTER-ATTACK (Sub-Priority to Terrain) ---
+            let bulletDanger = false;
+            let dangerousBullet: {pos: {x:number, y:number, z:number}, vel: {x:number, y:number, z:number}, ownerId: string} | null = null;
+            
+            simMetrics.projectileData.forEach((bullet, bulletId) => {
+                if (bullet.ownerId === id) return; // Ignore our own bullets
+                
+                const bPos = new THREE.Vector3(bullet.pos.x, bullet.pos.y, bullet.pos.z);
+                const bVel = new THREE.Vector3(bullet.vel.x, bullet.vel.y, bullet.vel.z);
+                
+                // Convert Rapier's pos to THREE.Vector3 before vector math
+                const myPos = new THREE.Vector3(pos.x, pos.y, pos.z);
+                const toBullet = bPos.clone().sub(myPos);
+                const distToBullet = toBullet.length();
+                
+                // Only scan bullets within our danger radar
+                if (distToBullet < lookAheadDist * 1.5) {
+                    const toBoid = myPos.clone().sub(bPos).normalize();
+                    const approachSpeed = bVel.clone().normalize().dot(toBoid);
+                    
+                    // If bullet velocity is heavily pointing at us (dot product > 0.8), it's a threat!
+                    if (approachSpeed > 0.8) { 
+                        bulletDanger = true;
+                        dangerousBullet = bullet;
+                    }
+                }
+            });
+
+            if (bulletDanger && dangerousBullet) {
+                // Personality Reflex! Fight vs Flight
+                if (aiStats.aggression > 0.6) {
+                    // FIGHT: Instantly become the hunter. Target the shooter!
+                    aiState.current = 'HUNT';
+                    vendettaTargetId.current = (dangerousBullet as any).ownerId;
                 } else {
-                   aiState.current = 'CRUISE'; // Safe default flatland behavior
+                    // FLIGHT: Panic Evade!
+                    if (aiState.current !== 'EVADE') {
+                        aiState.current = 'EVADE';
+                        // Dodge fully perpendicularly to break lock
+                        evadeSpinDir.current = Math.random() > 0.5 ? 1 : -1;
+                        evadeTargetDir.current.copy(_targetDir).applyAxisAngle(_surfaceNormal, evadeSpinDir.current * (Math.PI / 2)).normalize();
+                    }
+                }
+            } else {
+                // Safe from bullets and map edges
+                if (aiState.current === 'EVADE') {
+                    aiState.current = 'CRUISE'; 
+                }
+            } // Close the bulletDanger else block
+
+            // --- STATE MACHINE ---
+            // Two doctrines: CRUISE (stable gliding) and HUNT (combat).
+            
+            if (aiState.current === 'HUNT') {
+                // Chasing target, bleeding speed on turns.
+                // Exit when speed drops below personality threshold.
+                const huntExitThreshold = 0.80 - aiStats.combatPersistence * 0.50;
+                if (speedRatio < huntExitThreshold) {
+                    aiState.current = 'CRUISE';
                 }
             }
-
-           // --- STATE MACHINE ---
-           // Two doctrines: CRUISE (stable) and BnZ (energy cycling).
-           // DOGFIGHT is reachable from ANY state. After DOGFIGHT, return to preferred doctrine.
-           
-           if (aiState.current === 'BNZ_CLIMB') {
-               // Climbing: burning speed for altitude.
-               // → BNZ_DIVE when speed drops to climb depth
-               if (speedRatio < aiStats.bnzClimbDepth || !hasSlope) {
-                   aiState.current = 'BNZ_DIVE';
-               }
-           } else if (aiState.current === 'BNZ_DIVE') {
-               // Diving: converting altitude to speed.
-               // Let them dive until they reach immense speeds (1.3x their normal max) or run out of slope!
-               if (speedRatio > 1.30 || !hasSlope) {
-                   // BnZ-focused boids re-enter climb to loop the cycle
-                   if (hasSlope && Math.random() < aiStats.bnzEagerness) {
-                       aiState.current = 'BNZ_CLIMB';
-                   } else {
-                       aiState.current = 'CRUISE';
-                   }
-               }
-           } else if (aiState.current === 'DOGFIGHT') {
-               // Chasing target, bleeding speed on turns.
-               // Exit when speed drops below personality threshold.
-               if (speedRatio < aiStats.dogfightExitRatio) {
-                   // Return to preferred doctrine, not always CRUISE
-                   if (hasSlope && aiStats.bnzEagerness > 0.5) {
-                       aiState.current = 'BNZ_CLIMB'; // Energy-focused: rebuild via BnZ
-                   } else {
-                       aiState.current = 'CRUISE';
-                   }
-               }
-           } else if (aiState.current === 'CRUISE') {
-               // Stable flight. Consider entering BnZ based on personality.
-               if (hasSlope && speedRatio > 0.60 && Math.random() < (aiStats.bnzEagerness * delta * settings.bnzChance)) {
-                   aiState.current = 'BNZ_CLIMB';
-               }
-           }
        }
 
        
        let targetWeight = 0;
        
-       // 3. DOGFIGHT — Reachable from ANY non-EVADE state, BUT requires vision cone
+       // 3. HUNT — Reachable from ANY non-EVADE state, BUT requires vision cone
        let isDogfighting = false;
-       const canEnterDogfight = aiState.current !== 'EVADE' && speedRatio >= aiStats.dogfightExitRatio;
-       if ((aiState.current === 'DOGFIGHT' || canEnterDogfight)) {
+       const huntExitThreshold = 0.80 - aiStats.combatPersistence * 0.50;
+       const canEnterDogfight = aiState.current !== 'EVADE' && speedRatio >= huntExitThreshold;
+       if ((aiState.current === 'HUNT' || canEnterDogfight)) {
            let nearestDist = 100000; 
            let targetPos: {x:number, y:number, z:number} | null = null;
-           
-           let nearestId = '';
-           simMetrics.boidPositions.forEach((posOther, otherId) => {
-               if (otherId === id) return;
-               const dx = posOther.x - pos.x;
-               const dy = posOther.y - pos.y;
-               const dz = posOther.z - pos.z;
-               const distSq = dx*dx + dy*dy + dz*dz;
-               if (distSq < nearestDist && distSq > 0.1) { 
-                   nearestDist = distSq;
-                   targetPos = posOther;
-                   nearestId = otherId;
-               }
-           });
+            let nearestId = '';
+            
+            // 1. Check if we have an active vendetta against a shooter who is still alive
+            if (vendettaTargetId.current && (simMetrics.boidHealths.get(vendettaTargetId.current) ?? 0) > 0) {
+                nearestId = vendettaTargetId.current;
+                targetPos = simMetrics.boidPositions.get(nearestId) || null;
+            } else {
+               vendettaTargetId.current = null; // Clear if dead/disconnected
+            }
+
+            // 2. If no vendetta, fall back to hunting the closest visible prey
+            if (!targetPos) {
+                simMetrics.boidPositions.forEach((posOther, otherId) => {
+                    if (otherId === id) return;
+                    const dx = posOther.x - pos.x;
+                    const dy = posOther.y - pos.y;
+                    const dz = posOther.z - pos.z;
+                    const distSq = dx*dx + dy*dy + dz*dz;
+                    if (distSq < nearestDist && distSq > 0.1) { 
+                        nearestDist = distSq;
+                        targetPos = posOther;
+                        nearestId = otherId;
+                    }
+                });
+            }
 
             // Vision cone: is the target in front of us?
             let targetInCone = false;
@@ -345,25 +369,16 @@ export function Boid({ id, index }: { id: string, index: number }) {
                 targetInCone = _targetDir.dot(toTarget) > settings.dogfightCone;
             }
 
-            let wantsDogfight = aiState.current === 'DOGFIGHT'; // Already in combat → persist
-            // Only INITIATE dogfight if enemy is in vision cone
-            if (targetInCone && aiState.current !== 'DOGFIGHT') {
-                // From CRUISE
-                if (aiState.current === 'CRUISE' && Math.random() < (aiStats.aggression * delta * 2.0)) {
-                    wantsDogfight = true;
-                }
-                // From BNZ_DIVE — the "boom" attack run
-                if (aiState.current === 'BNZ_DIVE' && Math.random() < (aiStats.aggression * delta * 3.0)) {
-                    wantsDogfight = true;
-                }
-                // From BNZ_CLIMB — only for very aggressive boids
-                if (aiState.current === 'BNZ_CLIMB' && aiStats.aggression > 0.7 && Math.random() < (aiStats.aggression * delta * 1.0)) {
-                    wantsDogfight = true;
+            let wantsHunt = aiState.current === 'HUNT'; // Already in combat → persist
+            // Only INITIATE hunt if enemy is in vision cone
+            if (targetInCone && aiState.current !== 'HUNT') {
+                if (Math.random() < (aiStats.aggression * delta * 4.0)) {
+                    wantsHunt = true;
                 }
             }
 
-           if (targetPos !== null && wantsDogfight) {
-               aiState.current = 'DOGFIGHT';
+           if (targetPos !== null && wantsHunt) {
+               aiState.current = 'HUNT';
                isDogfighting = true;
                
                // Target Leading (Predator AI)
@@ -431,25 +446,10 @@ export function Boid({ id, index }: { id: string, index: number }) {
        }
        if (!isDogfighting) {
            // --- AI COMMAND INTERPRETER ---
-           if (aiState.current === 'EVADE') {
-              _idealDir.copy(_targetDir).applyAxisAngle(_surfaceNormal, evadeSpinDir.current * (Math.PI / 2)).normalize();
-              targetWeight = 1.0;
-           } else if (aiState.current === 'BNZ_CLIMB') {
-               // BnZ CLIMB: smoothly carve uphill. 
-               // Blend forward momentum with uphill gradient to avoid artificial 180-degree U-turns.
-               const uphill = projectedGravity.clone().negate().normalize();
-               const blend = direction.clone().add(uphill.multiplyScalar(1.5)); // 80% momentum, 80% gradient
-               if (blend.lengthSq() < 0.01) blend.copy(direction).applyAxisAngle(_surfaceNormal, 0.5); // Break stall symmetry
-               _idealDir.copy(blend).normalize();
+            if (aiState.current === 'EVADE') {
+               _idealDir.copy(evadeTargetDir.current);
                targetWeight = 1.0;
-            } else if (aiState.current === 'BNZ_DIVE') {
-               // BnZ DIVE: smoothly carve downhill.
-               const downhill = projectedGravity.clone().normalize();
-               const blend = direction.clone().add(downhill.multiplyScalar(1.5));
-               if (blend.lengthSq() < 0.01) blend.copy(direction).applyAxisAngle(_surfaceNormal, 0.5);
-               _idealDir.copy(blend).normalize();
-               targetWeight = 1.0;
-           } else {
+            } else {
               // CRUISE: Maintain current trajectory. Don't seek uphill or downhill.
               // Go straight with full motor for stable acceleration.
               _idealDir.copy(_targetDir);
@@ -462,20 +462,25 @@ export function Boid({ id, index }: { id: string, index: number }) {
        _idealDir.sub(_surfaceNormal.clone().multiplyScalar(_idealDir.dot(_surfaceNormal))).normalize();
        _targetDir.sub(_surfaceNormal.clone().multiplyScalar(_targetDir.dot(_surfaceNormal))).normalize();
 
-       // Calculate precisely how much we are turning to enforce the Turn Penalty Rule
-       const turnAmount = 1.0 - Math.max(0, _targetDir.dot(_idealDir)); 
-       
        let newVel = new THREE.Vector3(rawVel.x, rawVel.y, rawVel.z);
        let hasVelChange = false;
 
-       // Energy penalty for turning (The sharper the ideal turn, the more velocity is lost)
-       // We lowered the penalty significantly so they don't fall out of the sky while turning to HUNT
-       if (turnAmount > 0.01) {
-           const penalty = 1.0 - (turnAmount * delta * settings.turnPenalty);
-           newVel.x *= penalty;
-           newVel.y *= penalty;
-           newVel.z *= penalty;
+       // "Action of Turning": The physical penalty strictly applied when the AI aggressively steers the vehicle's nose
+       const turnStress = 1.0 - Math.max(0, _targetDir.dot(_idealDir)); 
+
+       // If the boid is actively executing an AI turning command
+       if (turnStress > 0.01) {
+           // We scale up the slider slightly so it's guaranteed to be noticeable
+           const penaltyStrength = settings.turnPenalty * 1.5; 
+           
+           // 1. Aerodynamic Bleed: Actively strip away their momentum based on how hard they are turning
+           const velocityBleed = Math.max(0.5, 1.0 - (turnStress * delta * penaltyStrength));
+           newVel.multiplyScalar(velocityBleed);
            hasVelChange = true;
+           
+           // 2. Engine Stall: Crucial fix. If we only sap their speed, the 600N Engine thrust instantly repowers them. 
+           // We must dramatically cut the throttle (targetWeight) because the thrusters are pointing sideways!
+           targetWeight *= Math.max(0.0, 1.0 - (turnStress * penaltyStrength));
        }
 
        // --- SURFACE TANGENT PLANE VELOCITY PROJECTION ---
@@ -520,7 +525,10 @@ export function Boid({ id, index }: { id: string, index: number }) {
        if (settings.showNoses && arrowRef.current) {
            arrowRef.current.position.set(pos.x, pos.y, pos.z);
            arrowRef.current.setDirection(_targetDir);
-           arrowRef.current.setLength(settings.debugSize * 1.5, settings.debugSize * 0.4, settings.debugSize * 0.3);
+           
+           // Render arrow length proportionally to linear velocity
+           const dynamicLength = settings.debugSize * (1.0 + speedRatio * 3.0);
+           arrowRef.current.setLength(dynamicLength, settings.debugSize * 0.4, settings.debugSize * 0.3);
            arrowRef.current.visible = true;
        } else if (arrowRef.current) {
            arrowRef.current.visible = false;
@@ -528,9 +536,9 @@ export function Boid({ id, index }: { id: string, index: number }) {
 
        // Synchronize Floating State Text
        if (settings.showStateLabels && textRef.current) {
-           const stateLabels: Record<string, string> = {
-               'CRUISE': 'C', 'BNZ_CLIMB': 'Z', 'BNZ_DIVE': 'S', 'DOGFIGHT': 'D', 'EVADE': 'E'
-           };
+            const stateLabels: Record<string, string> = {
+                'CRUISE': 'C', 'HUNT': 'H', 'EVADE': 'E'
+            };
            textRef.current.text = stateLabels[aiState.current] || aiState.current[0]; 
            textRef.current.position.set(pos.x, pos.y + (settings.debugSize * 0.8), pos.z);
            textRef.current.visible = true;

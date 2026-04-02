@@ -72,24 +72,17 @@ export function BoidInfoPanel() {
   const personality = simMetrics.boidPersonalities.get(selectedBoidId);
   if (!personality) return null;
 
-  const archetype = getArchetype(personality.aggression, personality.energyStyle, personality.riskTolerance);
-  const maxSpeedCap = useSimulationStore.getState().maxSpeedCap;
-  const bnzDepth = (personality.diveFraction * maxSpeedCap).toFixed(1);
-  const dogfightExit = (personality.climbFraction * maxSpeedCap).toFixed(1);
+  const archetype = getArchetype(personality.aggression, personality.combatPersistence, personality.riskTolerance);
 
   const stateColors: Record<string, string> = {
     'CRUISE': '#60a5fa',
-    'BNZ_CLIMB': '#a855f7',
-    'BNZ_DIVE': '#f59e0b',
-    'DOGFIGHT': '#ef4444',
+    'HUNT': '#ef4444',
     'EVADE': '#22c55e',
   };
 
   const stateLabels: Record<string, string> = {
     'CRUISE': 'CRUISE',
-    'BNZ_CLIMB': 'Z (Climb)',
-    'BNZ_DIVE': 'S (Dive)',
-    'DOGFIGHT': 'DOGFIGHT',
+    'HUNT': 'HUNT',
     'EVADE': 'EVADE',
   };
 
@@ -210,39 +203,11 @@ export function BoidInfoPanel() {
         description={personality.aggression > 0.7 ? 'Actively seeks dogfights' : personality.aggression > 0.4 ? 'Engages when opportunity arises' : 'Avoids combat, prioritizes energy'}
       />
       <PersonalityBar 
-        label="BnZ Intensity" 
-        value={personality.energyStyle} 
-        colorRange={BAR_COLORS.bnzIntensity} 
-        description={personality.energyStyle > 0.7 ? 'Extreme climbs → massive dive speed' : personality.energyStyle > 0.4 ? 'Moderate energy cycling' : 'Shallow BnZ, prefers stability'}
-      />
-      <PersonalityBar 
-        label="Combat Persistence" 
-        value={personality.riskTolerance} 
+        label="Persistence" 
+        value={personality.combatPersistence} 
         colorRange={BAR_COLORS.combatPersistence} 
-        description={personality.riskTolerance > 0.7 ? 'Relentless pursuer, chases until stalled' : personality.riskTolerance > 0.4 ? 'Moderate chase endurance' : 'Fire-and-forget, preserves energy'}
+        description={personality.combatPersistence > 0.7 ? 'Relentless pursuer, chases until stalled' : personality.combatPersistence > 0.4 ? 'Moderate chase endurance' : 'Fire-and-forget, preserves energy'}
       />
-
-      {/* Thresholds */}
-      <div style={{
-        marginTop: '8px',
-        padding: '8px',
-        background: 'rgba(0,0,0,0.25)',
-        borderRadius: '8px',
-        display: 'flex',
-        justifyContent: 'space-around'
-      }}>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: '0.6rem', color: '#a855f7', textTransform: 'uppercase' }}>BnZ Depth</div>
-          <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#a855f7' }}>{bnzDepth} m/s</div>
-          <div style={{ fontSize: '0.55rem', color: '#64748b' }}>Climbs until this speed</div>
-        </div>
-        <div style={{ width: '1px', background: 'rgba(255,255,255,0.1)' }} />
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: '0.6rem', color: '#ef4444', textTransform: 'uppercase' }}>Dogfight Exit</div>
-          <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#ef4444' }}>{dogfightExit} m/s</div>
-          <div style={{ fontSize: '0.55rem', color: '#64748b' }}>Breaks off chase below</div>
-        </div>
-      </div>
     </div>
   );
 }

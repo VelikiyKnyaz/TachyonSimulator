@@ -21,7 +21,6 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
     motorPower, setMotorPower,
     maxTurnRateDeg, setMaxTurnRateDeg,
     dogfightCone, setDogfightCone,
-    bnzChance, setBnzChance,
     huntConeCone, setHuntConeCone,
     fireRateDelay, setFireRateDelay,
     overheatCooldown, setOverheatCooldown,
@@ -173,14 +172,14 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
                 <summary style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--accent)', cursor: 'pointer', fontWeight: 'bold' }}>🏎️ Locomotion & Physics</summary>
                 <div style={{ marginTop: '0.75rem' }}>
                   <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
-                    <span>Motor Power (N)</span><span style={{ fontWeight: 'bold' }}>{motorPower.toFixed(0)}</span>
+                    <span>Acceleration (m/s²)</span><span style={{ fontWeight: 'bold' }}>{motorPower.toFixed(0)}</span>
                   </label>
-                  <input type="range" className="slider" min="100" max="2000" step="50" value={motorPower} onChange={(e) => setMotorPower(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
+                  <input type="range" className="slider" min="5" max="100" step="1" value={motorPower} onChange={(e) => setMotorPower(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
 
                   <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
                     <span>Cruise Speed (m/s)</span><span style={{ fontWeight: 'bold', color: 'var(--warning)' }}>{maxSpeedCap.toFixed(1)}</span>
                   </label>
-                  <input type="range" className="slider" min="10" max="100" step="1" value={maxSpeedCap} onChange={(e) => setMaxSpeedCap(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
+                  <input type="range" className="slider" min="10" max="500" step="5" value={maxSpeedCap} onChange={(e) => setMaxSpeedCap(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
 
                   <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
                     <span>Turn Penalty (Brake)</span><span style={{ fontWeight: 'bold', color: 'var(--danger)' }}>{turnPenalty.toFixed(2)}x</span>
@@ -222,11 +221,6 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
                     <span>Dogfight Vision Cone</span><span style={{ fontWeight: 'bold', color: '#ef4444' }}>{(Math.acos(dogfightCone) * 180 / Math.PI).toFixed(0)}°</span>
                   </label>
                   <input type="range" className="slider" min="0.0" max="0.95" step="0.05" value={dogfightCone} onChange={(e) => setDogfightCone(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
-
-                  <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
-                    <span>BnZ Entry Rate</span><span style={{ fontWeight: 'bold', color: '#a855f7' }}>{bnzChance.toFixed(1)}x</span>
-                  </label>
-                  <input type="range" className="slider" min="0.5" max="10.0" step="0.5" value={bnzChance} onChange={(e) => setBnzChance(parseFloat(e.target.value))} style={{ width: '100%' }} />
                 </div>
               </details>
 

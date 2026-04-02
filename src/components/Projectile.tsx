@@ -1,7 +1,7 @@
 import { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { RigidBody, RapierRigidBody, useRapier, BallCollider, interactionGroups } from '@react-three/rapier';
-import { useSimulationStore } from '../store';
+import { useSimulationStore, simMetrics } from '../store';
 
 import * as THREE from 'three';
 
@@ -39,6 +39,7 @@ export function Projectile({ id, position, direction, speed, ownerId, onHit }: {
   useFrame((_state, delta) => {
     if (dead.current) {
         if (!hitReported.current) {
+            simMetrics.projectileData.delete(id);
             onHit(id, targetHit.current);
             hitReported.current = true;
         }
@@ -56,6 +57,13 @@ export function Projectile({ id, position, direction, speed, ownerId, onHit }: {
         dead.current = true;
         return;
     }
+
+    // Broadcast High-Frequency Telemetry
+    simMetrics.projectileData.set(id, {
+        pos: { x: pos.x, y: pos.y, z: pos.z },
+        vel: { x: vel.x, y: vel.y, z: vel.z },
+        ownerId
+    });
 
     // Out of bounds cleanup (scales with arena)
     const arenaScale = useSimulationStore.getState().arenaScale;

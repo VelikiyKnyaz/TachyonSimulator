@@ -15,7 +15,8 @@ interface SimulationMetrics {
   shotsFired: number;
   hits: number;
   maxSpeed: number;
-  boidPersonalities: Map<string, { aggression: number, energyStyle: number, riskTolerance: number, diveFraction: number, climbFraction: number }>;
+  boidPersonalities: Map<string, { aggression: number, combatPersistence: number, riskTolerance: number }>;
+  projectileData: Map<string, {pos: {x:number, y:number, z:number}, vel: {x:number, y:number, z:number}, ownerId: string}>;
 }
 
 // Reactive object for high-frequency metrics to prevent component re-renders
@@ -34,7 +35,8 @@ export const simMetrics: SimulationMetrics = {
   shotsFired: 0,
   hits: 0,
   maxSpeed: 0,
-  boidPersonalities: new Map()
+  boidPersonalities: new Map(),
+  projectileData: new Map(),
 };
 
 interface SimulationStore {
@@ -62,7 +64,6 @@ interface SimulationStore {
   motorPower: number;
   maxTurnRateDeg: number;
   dogfightCone: number;     // Vision cone dot product for dogfight initiation (0=180°, 1=0°)
-  bnzChance: number;        // Multiplier for BnZ entry rate
   
   baseHealth: number;
   huntConeCone: number;
@@ -86,7 +87,6 @@ interface SimulationStore {
   setMotorPower: (v: number) => void;
   setMaxTurnRateDeg: (v: number) => void;
   setDogfightCone: (v: number) => void;
-  setBnzChance: (v: number) => void;
   
   setBaseHealth: (v: number) => void;
   setHuntConeCone: (v: number) => void;
@@ -118,8 +118,8 @@ export const useSimulationStore = create<SimulationStore>((set) => ({
   crashTolerance: 0.45,
   
   // Default values copied from user preferences
-  maxSpeedCap: 35.0,
-  turnPenalty: 0.2,
+  maxSpeedCap: 200.0,
+  turnPenalty: 1.0,
   evasionTurnAngle: 0.5,
   lookAheadDist: 1.0,
   centripetalGrip: 1.0,
@@ -131,12 +131,11 @@ export const useSimulationStore = create<SimulationStore>((set) => ({
   showKillMarkers: true,
   showSpeedRecords: false,
   debugSize: 3.0,
-  motorPower: 600.0,
+  motorPower: 12.0,
   maxTurnRateDeg: 120.0,
   dogfightCone: 0.3,       // ~72° forward cone
-  bnzChance: 3.0,          // BnZ entry rate multiplier
   
-  baseHealth: 100.0,
+  baseHealth: 500.0,
   huntConeCone: 0.5,
   fireRateDelay: 0.1,
   overheatCooldown: 5.0,
@@ -157,7 +156,6 @@ export const useSimulationStore = create<SimulationStore>((set) => ({
   setMotorPower: (v) => set({ motorPower: v }),
   setMaxTurnRateDeg: (v) => set({ maxTurnRateDeg: v }),
   setDogfightCone: (v) => set({ dogfightCone: v }),
-  setBnzChance: (v) => set({ bnzChance: v }),
   
   setBaseHealth: (v) => set({ baseHealth: v }),
   setHuntConeCone: (v) => set({ huntConeCone: v }),
