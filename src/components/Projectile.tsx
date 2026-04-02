@@ -1,19 +1,18 @@
-import React, { useRef, useEffect } from 'react';
+import { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { RigidBody, RapierRigidBody, useRapier, BallCollider, interactionGroups } from '@react-three/rapier';
-
+import { useSimulationStore } from '../store';
 
 import * as THREE from 'three';
 
 // --- GIGANTIC PERFORMANCE OPTIMIZATION ---
 // Create the geometry and material ONCE in memory for all projectiles globally.
-// 500 bullets creating 500 geometries per second murders the GPU and Garbage Collector.
-// We also reduced geometry complexity from 16x16 to a low-poly 4x4 Icosahedron (looks like a sphere when small).
 const PROJECTILE_GEOM = new THREE.IcosahedronGeometry(0.3, 0); 
 const PROJECTILE_MAT = new THREE.MeshBasicMaterial({ color: '#ffff00' });
 
+// Reusable vectors to avoid GC pressure (per-frame allocations)
 const _rayOrigin = new THREE.Vector3();
-const _gravityDir = new THREE.Vector3(0, -1, 0);
+const _surfaceNormal = new THREE.Vector3();
 
 export function Projectile({ id, position, direction, speed, ownerId, onHit }: { 
     id: string, 
@@ -28,73 +27,134 @@ export function Projectile({ id, position, direction, speed, ownerId, onHit }: {
   const dead = useRef(false);
   const targetHit = useRef<string | undefined>(undefined);
   const timeAlive = useRef(0);
+  const hitReported = useRef(false);
 
-  useEffect(() => {
-    if (bodyRef.current) {
-      bodyRef.current.setLinvel({
-        x: direction.x * speed,
-        y: direction.y * speed,
-        z: direction.z * speed
-      }, true);
-    }
-  }, [direction, speed]);
+  // Compute initial velocity ONCE at creation (no useEffect delay!)
+  const initialVelocity: [number, number, number] = [
+    direction.x * speed,
+    direction.y * speed,
+    direction.z * speed
+  ];
 
-  useFrame((state, delta) => {
+  useFrame((_state, delta) => {
     if (dead.current) {
-        onHit(id, targetHit.current);
+        if (!hitReported.current) {
+            onHit(id, targetHit.current);
+            hitReported.current = true;
+        }
         return;
     }
     
     if (!bodyRef.current) return;
     const body = bodyRef.current;
     const pos = body.translation();
+    const vel = body.linvel();
     
-    // Safety generic lifetime so it doesn't wander in infinity forever if locked out of bounds
+    // Safety lifetime limit
     timeAlive.current += delta;
     if (timeAlive.current > 15.0) {
         dead.current = true;
         return;
     }
 
-    // Out of bounds cleanup (Optimization)
-    // Destruir poco tiempo después de salir de la zona concava-plana
-    if (pos.y < -50 || pos.y > 150 || Math.abs(pos.x) > 150 || Math.abs(pos.z) > 150) {
+    // Out of bounds cleanup (scales with arena)
+    const arenaScale = useSimulationStore.getState().arenaScale;
+    const bound = 150 * arenaScale;
+    if (pos.y < -50 * arenaScale || pos.y > bound || Math.abs(pos.x) > bound || Math.abs(pos.z) > bound) {
         dead.current = true;
         return;
     }
     
-    // To ensure projectiles aggressively stick to curves dynamically, 
-    // we use Rapier's friction and restitution, relying purely on Centrifugal force of the sphere!
+    // --- CONSTANT-SPEED SURFACE-FOLLOWING ---
+    // Rule: Projectiles NEVER change speed. They only change direction to follow surfaces.
+    _rayOrigin.set(pos.x, pos.y, pos.z);
+    const ray = new rapier.Ray(_rayOrigin, { x: 0, y: -1, z: 0 });
+    const hit = world.castRay(ray, 10, true, undefined, interactionGroups(0, [0]), undefined, body);
+    
+    if (hit && hit.collider) {
+      const toi = (hit as any).toi !== undefined ? (hit as any).toi : (hit as any).timeOfImpact;
+      
+      if (typeof toi === 'number' && !isNaN(toi) && toi < 2.0) {
+        // Near a surface — project velocity onto tangent plane
+        const nHit = hit.collider.castRayAndGetNormal(ray, 10, true);
+        if (nHit !== null) {
+          _surfaceNormal.set(nHit.normal.x, nHit.normal.y, nHit.normal.z).normalize();
+          
+          // Project velocity onto the surface tangent plane:
+          // v_tangent = v - normal * dot(v, normal)
+          const dotVN = vel.x * _surfaceNormal.x + vel.y * _surfaceNormal.y + vel.z * _surfaceNormal.z;
+          let tx = vel.x - _surfaceNormal.x * dotVN;
+          let ty = vel.y - _surfaceNormal.y * dotVN;
+          let tz = vel.z - _surfaceNormal.z * dotVN;
+          
+          // Re-normalize to the ORIGINAL constant speed
+          const tangentLen = Math.sqrt(tx * tx + ty * ty + tz * tz);
+          if (tangentLen > 0.01) {
+            const scale = speed / tangentLen;
+            tx *= scale;
+            ty *= scale;
+            tz *= scale;
+          }
+          
+          body.setLinvel({ x: tx, y: ty, z: tz }, true);
+          
+          // Push projectile gently toward surface to prevent floating away
+          // This is a position correction, not a velocity change
+          if (toi > 0.8) {
+            // Projectile is drifting away from surface — nudge it back
+            const correction = (toi - 0.5) * delta * 20;
+            body.setTranslation({
+              x: pos.x - _surfaceNormal.x * correction,
+              y: pos.y - _surfaceNormal.y * correction,
+              z: pos.z - _surfaceNormal.z * correction
+            }, true);
+          }
+        }
+      }
+    }
+    
+    // ENFORCE constant speed even when airborne (no surface detected)
+    // This guarantees the projectile NEVER slows down or speeds up
+    const currentVel = body.linvel();
+    const currentSpeed = Math.sqrt(currentVel.x * currentVel.x + currentVel.y * currentVel.y + currentVel.z * currentVel.z);
+    if (currentSpeed > 0.01 && Math.abs(currentSpeed - speed) > 0.5) {
+      const correction = speed / currentSpeed;
+      body.setLinvel({
+        x: currentVel.x * correction,
+        y: currentVel.y * correction,
+        z: currentVel.z * correction
+      }, true);
+    }
   });
 
   return (
     <RigidBody
       ref={bodyRef}
       position={[position.x, position.y, position.z]}
-      mass={1.0}          // High mass stabilizes the physics solver against the terrain. They don't push Boids because Boids die instantly on touch anyway.
+      linearVelocity={initialVelocity}
+      mass={1.0}
       colliders={false}
-      restitution={0.0}   // DEAD BOUNCE (Stick to the floor/curve)
-      friction={0.0}      // ZERO FRICTION (Glide perfectly without losing momentum)
+      restitution={0.0}
+      friction={0.0}
       linearDamping={0.0}
       angularDamping={0.0}
-      ccd={false}         // Disabling CCD stops them from getting 'stuck' or jittering inside the internal edges of the Arena 3D Mesh.
-      gravityScale={3.0} // High default gravity to ensure it aggressively arcs and pushes against concave surfaces
+      ccd={false}
+      gravityScale={0}       // NO gravity! Surface-following is fully handled by the active tangent projection system.
       name={`projectile-${ownerId}`}
-      collisionGroups={interactionGroups(2, [0, 1])}
-      onCollisionEnter={({ colliderObject }) => {
-          if (!colliderObject || dead.current) return;
-          
-          if (colliderObject.name === `boid-${ownerId}`) return;
-
-          // ONLY DESPAWN ON BOID HIT! They must stick to curves and slide forever otherwise.
-          if (colliderObject.name && colliderObject.name.startsWith('boid-')) {
+      dominanceGroup={-127}
+      collisionGroups={interactionGroups(2, [0])}
+      solverGroups={interactionGroups(2, [0])}
+      onIntersectionEnter={({ rigidBodyObject }) => {
+          if (!rigidBodyObject || dead.current) return;
+          if (rigidBodyObject.name === `boid-${ownerId}`) return;
+          if (rigidBodyObject.name && rigidBodyObject.name.startsWith('boid-')) {
               dead.current = true;
-              targetHit.current = colliderObject.name.replace('boid-', '');
+              targetHit.current = rigidBodyObject.name.replace('boid-', '');
           }
       }}
     >
-      <BallCollider args={[0.3]} />
-      {/* NO SHADOWS: Tiny fast glowing bullets don't need shadow maps, which saves massive FPS */}
+      <BallCollider args={[0.3]} collisionGroups={interactionGroups(2, [0])} solverGroups={interactionGroups(2, [0])} />
+      <BallCollider args={[2.5]} sensor collisionGroups={interactionGroups(2, [1])} />
       <mesh geometry={PROJECTILE_GEOM} material={PROJECTILE_MAT} />
     </RigidBody>
   );

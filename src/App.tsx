@@ -6,11 +6,14 @@ import { Sidebar } from './components/Sidebar';
 import { Dashboard } from './components/Dashboard';
 import { Arena } from './components/Arena';
 import { BoidSwarm } from './components/BoidSwarm';
+import { CameraFollower } from './components/CameraFollower';
+import { BoidInfoPanel } from './components/BoidInfoPanel';
 import { useSimulationStore } from './store';
 
 export default function App() {
   const [arenaModel, setArenaModel] = useState<{url: string, type: string} | null>(null);
   const isRunning = useSimulationStore(state => state.isRunning);
+  const arenaScale = useSimulationStore(state => state.arenaScale);
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -31,7 +34,7 @@ export default function App() {
       onDrop={handleDrop}
       style={{ display: 'flex', width: '100%', height: '100%' }}
     >
-      <Sidebar arenaLoaded={!!arenaModel} />
+      <Sidebar arenaLoaded={true} />
       
       <main className="simulation-view" style={{ flexGrow: 1, position: 'relative' }}>
         {!arenaModel && !isRunning && (
@@ -43,24 +46,8 @@ export default function App() {
           }}>
             <h2 style={{ color: 'var(--accent-hover)', marginBottom: '1rem' }}>Arena Sandbox Ready</h2>
             <p style={{ lineHeight: '1.6', marginBottom: '1.5rem', color: 'var(--text-secondary)' }}>
-              Drag and drop an <code>.obj</code>, <code>.fbx</code>, or <code>.glb</code> model, or select a default procedural arena below:
+              Press <strong>Start</strong> to run on the default plane, or drag and drop an <code>.obj</code>, <code>.fbx</code>, or <code>.glb</code> model to use a custom arena.
             </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              <button 
-                className="btn-secondary" 
-                onClick={() => setArenaModel({ url: 'procedural', type: 'flattened-bowl' })}
-                style={{ padding: '0.75rem', width: '100%', cursor: 'pointer', border: '1px solid var(--accent)' }}
-              >
-                Load Flattened Bowl
-              </button>
-              <button 
-                className="btn-secondary" 
-                onClick={() => setArenaModel({ url: 'procedural', type: 'skatepark' })}
-                style={{ padding: '0.75rem', width: '100%', cursor: 'pointer', border: '1px solid var(--accent)' }}
-              >
-                Load Skatepark
-              </button>
-            </div>
           </div>
         )}
 
@@ -74,9 +61,9 @@ export default function App() {
             
             <Physics>
               {!arenaModel ? (
-                <RigidBody type="fixed">
-                  <mesh receiveShadow position={[0, -0.5, 0]}>
-                    <boxGeometry args={[200, 1, 200]} />
+              <RigidBody type="fixed" key={`plane-${arenaScale}`}>
+                  <mesh receiveShadow position={[0, -0.5 * arenaScale, 0]}>
+                    <boxGeometry args={[200 * arenaScale, 1 * arenaScale, 200 * arenaScale]} />
                     <meshStandardMaterial color="#131b2f" roughness={0.8} />
                   </mesh>
                 </RigidBody>
@@ -88,10 +75,12 @@ export default function App() {
             </Physics>
             
             <OrbitControls makeDefault />
+            <CameraFollower />
           </Suspense>
         </Canvas>
 
         {(arenaModel || isRunning) && <Dashboard />}
+        <BoidInfoPanel />
       </main>
     </div>
   );

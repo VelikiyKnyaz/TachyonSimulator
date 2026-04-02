@@ -7,29 +7,69 @@ import { useFrame } from '@react-three/fiber';
 
 const _crashDummy = new THREE.Object3D();
 
-function CrashHeatmap() {
+function DeathMarkers() {
   const meshRef = useRef<THREE.InstancedMesh>(null);
+  const showDeaths = useSimulationStore(state => state.showDeathMarkers);
+  const showKills = useSimulationStore(state => state.showKillMarkers);
   const maxCrashes = 1000;
   
   useFrame(() => {
     if (!meshRef.current) return;
-    const markers = simMetrics.crashMarkers;
-    if (meshRef.current.count !== markers.length) {
-       meshRef.current.count = Math.min(markers.length, maxCrashes);
-       for (let i = 0; i < meshRef.current.count; i++) {
-           _crashDummy.position.set(markers[i].x, markers[i].y + 1, markers[i].z);
-           _crashDummy.rotation.set(Math.random(), Math.random(), Math.random());
-           _crashDummy.updateMatrix();
-           meshRef.current.setMatrixAt(i, _crashDummy.matrix);
-       }
-       meshRef.current.instanceMatrix.needsUpdate = true;
+    const markers = simMetrics.deathMarkers;
+    
+    let count = 0;
+    for (let i = 0; i < markers.length && count < maxCrashes; i++) {
+        const m = markers[i];
+        if (m.isKill && !showKills) continue;
+        if (!m.isKill && !showDeaths) continue;
+
+        _crashDummy.position.set(m.x, m.y + (m.isKill ? 2 : 1), m.z);
+        _crashDummy.rotation.set(Math.random(), Math.random(), Math.random());
+        const scale = m.isKill ? 1.5 : 1.0;
+        _crashDummy.scale.set(scale, scale, scale);
+        _crashDummy.updateMatrix();
+        meshRef.current.setMatrixAt(count, _crashDummy.matrix);
+        meshRef.current.setColorAt(count, new THREE.Color(m.isKill ? "#eab308" : "#ef4444"));
+        count++;
     }
+    meshRef.current.count = count;
+    meshRef.current.instanceMatrix.needsUpdate = true;
+    if (meshRef.current.instanceColor) meshRef.current.instanceColor.needsUpdate = true;
   });
 
   return (
-    <instancedMesh ref={meshRef} args={[undefined, undefined, maxCrashes]} count={0}>
+    <instancedMesh ref={meshRef} args={[undefined, undefined, maxCrashes]} count={0} visible={showDeaths || showKills}>
         <icosahedronGeometry args={[0.8, 0]} />
-        <meshBasicMaterial color="#ef4444" wireframe transparent opacity={0.8} />
+        <meshBasicMaterial wireframe transparent opacity={0.8} />
+    </instancedMesh>
+  );
+}
+
+function SpeedRecordMarkers() {
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+  const show = useSimulationStore(state => state.showSpeedRecords);
+  const maxRecords = 50; 
+  
+  useFrame(() => {
+    if (!meshRef.current || !show) return;
+    const markers = Array.from(simMetrics.boidMaxSpeeds.values());
+    
+    meshRef.current.count = Math.min(markers.length, maxRecords);
+    for (let i = 0; i < meshRef.current.count; i++) {
+        const m = markers[i];
+        _crashDummy.position.set(m.x, m.y + 10, m.z);
+        _crashDummy.rotation.set(0, Date.now() * 0.002, 0); 
+        _crashDummy.scale.set(1, 1, 1);
+        _crashDummy.updateMatrix();
+        meshRef.current.setMatrixAt(i, _crashDummy.matrix);
+    }
+    meshRef.current.instanceMatrix.needsUpdate = true;
+  });
+
+  return (
+    <instancedMesh ref={meshRef} args={[undefined, undefined, maxRecords]} count={0} visible={show}>
+        <octahedronGeometry args={[1.5, 0]} />
+        <meshBasicMaterial color="#38bdf8" wireframe />
     </instancedMesh>
   );
 }
@@ -45,12 +85,16 @@ export function BoidSwarm() {
           if (proj) {
               const shooterId = proj.ownerId;
               simMetrics.hits++;
-              simMetrics.kills[shooterId] = (simMetrics.kills[shooterId] || 0) + 1;
-              simMetrics.deaths[targetBoidId] = (simMetrics.deaths[targetBoidId] || 0) + 1;
-              // Add a crash marker to represent explosion
-              const targetPos = simMetrics.boidPositions.get(targetBoidId);
-              if (targetPos) {
-                 simMetrics.crashMarkers.push({ id: `explode-${Date.now()}`, x: targetPos.x, y: targetPos.y, z: targetPos.z });
+              
+              // Apply 25 damage per hit to the boid's health pool
+              const currentHp = simMetrics.boidHealths.get(targetBoidId) ?? useSimulationStore.getState().baseHealth;
+              const newHp = currentHp - 25;
+              simMetrics.boidHealths.set(targetBoidId, newHp);
+              
+              if (newHp <= 0) {
+                  // The Boid will naturally evaluate this and respawn / leave a marker on its next frame
+                  simMetrics.kills[shooterId] = (simMetrics.kills[shooterId] || 0) + 1;
+                  simMetrics.deaths[targetBoidId] = (simMetrics.deaths[targetBoidId] || 0) + 1;
               }
           }
       }
@@ -75,7 +119,8 @@ export function BoidSwarm() {
           />
         ))}
       </group>
-      <CrashHeatmap />
+      <DeathMarkers />
+      <SpeedRecordMarkers />
     </>
   );
 }

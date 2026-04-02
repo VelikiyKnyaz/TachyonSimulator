@@ -93,7 +93,7 @@ function ArenaScene({ scene }: { scene: THREE.Object3D }) {
   }, [scene, showCurvature, arenaScale]);
 
   return (
-    <RigidBody type="fixed" colliders="trimesh">
+    <RigidBody type="fixed" colliders="trimesh" key={`arena-${arenaScale}`}>
       <primitive object={processedScene} />
     </RigidBody>
   );

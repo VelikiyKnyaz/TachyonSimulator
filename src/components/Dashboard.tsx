@@ -6,12 +6,12 @@ export function Dashboard() {
   const [metrics, setMetrics] = useState({
     activeBoids: 0,
     crashes: 0,
+    kills: 0,
     avgSpeed: 0,
     maxSpeed: 0,
     shotsFired: 0,
     hits: 0,
-    states: { HUNT: 0, DIVE: 0, EVADE: 0, CRUISE: 0 },
-    topKiller: { id: '', kills: 0 }
+    states: { HUNT: 0, DIVE: 0, EVADE: 0, CRUISE: 0 }
   });
 
   useEffect(() => {
@@ -31,24 +31,19 @@ export function Dashboard() {
           else st[val] = 1;
       });
 
-      let topKills = 0;
-      let topId = '';
-      Object.entries(simMetrics.kills).forEach(([id, kills]) => {
-          if (kills > topKills) {
-              topKills = kills;
-              topId = id;
-          }
-      });
+
+
+      const totalKills = Object.values(simMetrics.kills).reduce((a, b) => a + b, 0);
 
       setMetrics({
         activeBoids: simMetrics.activeBoids,
         crashes: simMetrics.crashes,
+        kills: totalKills,
         avgSpeed: active > 0 ? totalSpeed / active : 0,
         maxSpeed: simMetrics.maxSpeed,
         shotsFired: simMetrics.shotsFired,
         hits: simMetrics.hits,
-        states: st as { HUNT: number; DIVE: number; EVADE: number; CRUISE: number; },
-        topKiller: { id: topId, kills: topKills }
+        states: st as { HUNT: number; DIVE: number; EVADE: number; CRUISE: number; }
       });
     }, 200);
 
@@ -82,6 +77,17 @@ export function Dashboard() {
             <p style={{ fontSize: '0.75rem', margin: 0, color: 'var(--text-secondary)' }}>Crashes</p>
           </div>
           <p style={{ fontSize: '1.5rem', fontWeight: 'bold', margin: 0, color: 'var(--danger)' }}>{metrics.crashes}</p>
+        </div>
+
+        <div className="metric" style={{ background: 'var(--bg-secondary)', padding: '1rem', borderRadius: '8px', gridColumn: 'span 2' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+            <Skull size={14} color="#eab308" />
+            <p style={{ fontSize: '0.75rem', margin: 0, color: 'var(--text-secondary)' }}>Kills</p>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <p style={{ fontSize: '1.5rem', fontWeight: 'bold', margin: 0, color: '#eab308' }}>{metrics.kills}</p>
+            <p style={{ fontSize: '0.75rem', margin: 0, color: 'var(--text-muted)' }}>Hits: {metrics.hits}</p>
+          </div>
         </div>
 
         <div className="metric" style={{ gridColumn: 'span 2', background: 'var(--bg-secondary)', padding: '1rem', borderRadius: '8px' }}>
@@ -120,15 +126,6 @@ export function Dashboard() {
              </div>
           </div>
 
-          <div style={{ background: 'var(--bg-primary)', padding: '0.75rem', borderRadius: '8px', marginTop: '1rem' }}>
-            <div style={{ opacity: 0.7, fontSize: '0.75rem' }}>Top Killer</div>
-            <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: 'var(--accent)' }}>
-              {metrics.topKiller.kills > 0 ? `${metrics.topKiller.kills} Kills` : '-'}
-            </div>
-            <div style={{ opacity: 0.5, fontSize: '0.65rem', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {metrics.topKiller.id || 'No casualties'}
-            </div>
-          </div>
         </div>
       </div>
     </div>

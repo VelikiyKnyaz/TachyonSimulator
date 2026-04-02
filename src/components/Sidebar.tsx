@@ -14,15 +14,19 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
     baseFriction, setBaseFriction,
     showNoses, toggleNoses,
     showStateLabels, toggleStateLabels,
+    showDeathMarkers, toggleDeathMarkers,
+    showKillMarkers, toggleKillMarkers,
+    showSpeedRecords, toggleSpeedRecords,
     debugSize, setDebugSize,
     motorPower, setMotorPower,
     maxTurnRateDeg, setMaxTurnRateDeg,
-    diveEnergyThreshold, setDiveEnergyThreshold,
-    climbEnergyThreshold, setClimbEnergyThreshold,
+    dogfightCone, setDogfightCone,
+    bnzChance, setBnzChance,
     huntConeCone, setHuntConeCone,
     fireRateDelay, setFireRateDelay,
     overheatCooldown, setOverheatCooldown,
-    projectileSpeed, setProjectileSpeed
+    projectileSpeed, setProjectileSpeed,
+    baseHealth, setBaseHealth
   } = useSimulationStore();
   
   return (
@@ -75,6 +79,29 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
               style={{ width: '100%', color: showStateLabels ? 'var(--warning)' : '', borderColor: showStateLabels ? 'var(--warning)' : '' }}
             >
               <Box size={16} /> State
+            </button>
+        </div>
+        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
+            <button 
+              className={`btn-secondary ${showDeathMarkers ? 'active-toggle' : ''}`} 
+              onClick={toggleDeathMarkers}
+              style={{ width: '100%', color: showDeathMarkers ? '#ef4444' : '', borderColor: showDeathMarkers ? '#ef4444' : '' }}
+            >
+              <MapIcon size={16} /> Crash
+            </button>
+            <button 
+              className={`btn-secondary ${showKillMarkers ? 'active-toggle' : ''}`} 
+              onClick={toggleKillMarkers}
+              style={{ width: '100%', color: showKillMarkers ? '#eab308' : '', borderColor: showKillMarkers ? '#eab308' : '' }}
+            >
+              <MapIcon size={16} /> Kills
+            </button>
+            <button 
+              className={`btn-secondary ${showSpeedRecords ? 'active-toggle' : ''}`} 
+              onClick={toggleSpeedRecords}
+              style={{ width: '100%', color: showSpeedRecords ? '#38bdf8' : '', borderColor: showSpeedRecords ? '#38bdf8' : '' }}
+            >
+              <MapIcon size={16} /> Recs
             </button>
         </div>
 
@@ -141,9 +168,9 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
             {/* --- AI ACCORDION MENUS --- */}
             <div style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
               
-              {/* CATEGORY 1: Físicas */}
+              {/* CATEGORY 1: Physics */}
               <details style={{ padding: '0.5rem', background: 'rgba(0,0,0,0.3)', borderRadius: '4px', border: '1px solid var(--accent-hover)' }} open>
-                <summary style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--accent)', cursor: 'pointer', fontWeight: 'bold' }}>🏎️ Locomoción & Físicas</summary>
+                <summary style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--accent)', cursor: 'pointer', fontWeight: 'bold' }}>🏎️ Locomotion & Physics</summary>
                 <div style={{ marginTop: '0.75rem' }}>
                   <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
                     <span>Motor Power (N)</span><span style={{ fontWeight: 'bold' }}>{motorPower.toFixed(0)}</span>
@@ -151,7 +178,7 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
                   <input type="range" className="slider" min="100" max="2000" step="50" value={motorPower} onChange={(e) => setMotorPower(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
 
                   <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
-                    <span>Max Speed (m/s)</span><span style={{ fontWeight: 'bold', color: 'var(--warning)' }}>{maxSpeedCap.toFixed(1)}</span>
+                    <span>Cruise Speed (m/s)</span><span style={{ fontWeight: 'bold', color: 'var(--warning)' }}>{maxSpeedCap.toFixed(1)}</span>
                   </label>
                   <input type="range" className="slider" min="10" max="100" step="1" value={maxSpeedCap} onChange={(e) => setMaxSpeedCap(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
 
@@ -172,9 +199,9 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
                 </div>
               </details>
 
-              {/* CATEGORY 2: Sensores */}
+              {/* CATEGORY 2: Sensors */}
               <details style={{ padding: '0.5rem', background: 'rgba(0,0,0,0.3)', borderRadius: '4px', border: '1px solid var(--accent-hover)' }}>
-                <summary style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--success)', cursor: 'pointer', fontWeight: 'bold' }}>👁️ Sensores & Energía</summary>
+                <summary style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--success)', cursor: 'pointer', fontWeight: 'bold' }}>👁️ Sensors & AI</summary>
                 <div style={{ marginTop: '0.75rem' }}>
                   <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
                     <span>Lidar Range (x)</span><span style={{ fontWeight: 'bold' }}>{lookAheadDist.toFixed(2)}</span>
@@ -192,25 +219,30 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
                   <input type="range" className="slider" min="30" max="720" step="10" value={maxTurnRateDeg} onChange={(e) => setMaxTurnRateDeg(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
 
                   <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
-                    <span>Dive Energy Min</span><span style={{ fontWeight: 'bold' }}>{diveEnergyThreshold.toFixed(0)}m/s</span>
+                    <span>Dogfight Vision Cone</span><span style={{ fontWeight: 'bold', color: '#ef4444' }}>{(Math.acos(dogfightCone) * 180 / Math.PI).toFixed(0)}°</span>
                   </label>
-                  <input type="range" className="slider" min="10" max="60" step="1" value={diveEnergyThreshold} onChange={(e) => setDiveEnergyThreshold(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
+                  <input type="range" className="slider" min="0.0" max="0.95" step="0.05" value={dogfightCone} onChange={(e) => setDogfightCone(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
 
                   <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
-                    <span>Climb Energy Max</span><span style={{ fontWeight: 'bold' }}>{climbEnergyThreshold.toFixed(0)}m/s</span>
+                    <span>BnZ Entry Rate</span><span style={{ fontWeight: 'bold', color: '#a855f7' }}>{bnzChance.toFixed(1)}x</span>
                   </label>
-                  <input type="range" className="slider" min="20" max="80" step="1" value={climbEnergyThreshold} onChange={(e) => setClimbEnergyThreshold(parseFloat(e.target.value))} style={{ width: '100%' }} />
+                  <input type="range" className="slider" min="0.5" max="10.0" step="0.5" value={bnzChance} onChange={(e) => setBnzChance(parseFloat(e.target.value))} style={{ width: '100%' }} />
                 </div>
               </details>
 
-              {/* CATEGORY 3: Combate */}
+              {/* CATEGORY 3: Combat */}
               <details style={{ padding: '0.5rem', background: 'rgba(0,0,0,0.3)', borderRadius: '4px', border: '1px solid var(--accent-hover)' }}>
-                <summary style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--danger)', cursor: 'pointer', fontWeight: 'bold' }}>⚔️ Combate & Caza</summary>
+                <summary style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--danger)', cursor: 'pointer', fontWeight: 'bold' }}>⚔️ Combat & Weapons</summary>
                 <div style={{ marginTop: '0.75rem' }}>
                   <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
-                    <span>Aim Assist Cone</span><span style={{ fontWeight: 'bold' }}>{huntConeCone.toFixed(2)}</span>
+                    <span>Trigger Discipline</span><span style={{ fontWeight: 'bold' }}>{huntConeCone.toFixed(2)}</span>
                   </label>
                   <input type="range" className="slider" min="0.1" max="0.95" step="0.05" value={huntConeCone} onChange={(e) => setHuntConeCone(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
+
+                  <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
+                    <span>Base Health (hp)</span><span style={{ fontWeight: 'bold', color: 'var(--success)' }}>{baseHealth.toFixed(0)}</span>
+                  </label>
+                  <input type="range" className="slider" min="10" max="500" step="10" value={baseHealth} onChange={(e) => setBaseHealth(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
 
                   <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
                     <span>Fire Rate (s)</span><span style={{ fontWeight: 'bold' }}>{fireRateDelay.toFixed(3)}s</span>
