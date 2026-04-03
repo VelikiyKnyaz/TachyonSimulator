@@ -25,6 +25,9 @@ export function Boid({ id, index }: { id: string, index: number }) {
   const bodyRef = useRef<RapierRigidBody>(null);
   const arrowRef = useRef<THREE.ArrowHelper>(null);
   const textRef = useRef<any>(null); // For Drei Text component
+  const radarGroupRef = useRef<THREE.Group>(null);
+  const radialMeshRef = useRef<THREE.Mesh>(null);
+  const coneMeshRef = useRef<THREE.Mesh>(null);
   const { rapier, world } = useRapier();
   const prevNormal = useRef(new THREE.Vector3(0, 1, 0));
   const aiState = useRef<BoidState>('CRUISE');
@@ -37,6 +40,7 @@ export function Boid({ id, index }: { id: string, index: number }) {
   const evadeRetaliateId = useRef<string | null>(null); // After dodge, counter-attack this shooter
   const fireCooldown = useRef(0); // Used for Overheat cooldown
   const heat = useRef(0);         // Used for Machine-gun burst
+  const prevSpeed = useRef(0);
   const wasGrounded = useRef(false);
   const respawning = useRef(false);
   const [isHovered, setIsHovered] = useState(false);
@@ -103,6 +107,7 @@ export function Boid({ id, index }: { id: string, index: number }) {
        prevNormal.current.set(0, 1, 0); // Reset so we don't compare against stale normal from death location
        heat.current = 0;
        fireCooldown.current = 0;
+       prevSpeed.current = 0;
        evadeTimer.current = 0;
        jinkTimer.current = 0;
        evadeRetaliateId.current = null;
@@ -122,6 +127,9 @@ export function Boid({ id, index }: { id: string, index: number }) {
         simMetrics.deathMarkers.push({ id: `death-${Date.now()}-${id}`, x: body.translation().x, y: body.translation().y, z: body.translation().z, isKill: true });
         respawning.current = true;
         simMetrics.boidHealths.set(id, settings.baseHealth);
+        if (textRef.current) textRef.current.visible = false;
+        if (arrowRef.current) arrowRef.current.visible = false;
+        if (radarGroupRef.current) radarGroupRef.current.visible = false;
         return;
     }
 
@@ -218,6 +226,9 @@ export function Boid({ id, index }: { id: string, index: number }) {
         simMetrics.deathMarkers.push({ id: id + '-' + Date.now(), x: pos.x, y: pos.y, z: pos.z, isKill: false });
         respawning.current = true;
         simMetrics.boidHealths.set(id, settings.baseHealth);
+        if (textRef.current) textRef.current.visible = false;
+        if (arrowRef.current) arrowRef.current.visible = false;
+        if (radarGroupRef.current) radarGroupRef.current.visible = false;
         return;
     }
 
@@ -243,9 +254,51 @@ export function Boid({ id, index }: { id: string, index: number }) {
     if (speed > simMetrics.maxSpeed) simMetrics.maxSpeed = speed;
 
     // Personal Max Speed Tracker
-    const currentMax = simMetrics.boidMaxSpeeds.get(id);
-    if (!currentMax || speed > currentMax.speed) {
-        simMetrics.boidMaxSpeeds.set(id, { speed, x: pos.x, y: pos.y, z: pos.z });
+    const currentMaxSpeeds = simMetrics.boidMaxSpeeds.get(id) || [];
+    let updatedSpeeds = false;
+    const minD = 5.0; // Minimal distance between recorded markers
+    
+    if (currentMaxSpeeds.length < 3) {
+        if (!currentMaxSpeeds.some(m => Math.hypot(m.x - pos.x, m.y - pos.y, m.z - pos.z) < minD)) {
+            currentMaxSpeeds.push({ speed, x: pos.x, y: pos.y, z: pos.z });
+            currentMaxSpeeds.sort((a, b) => b.speed - a.speed);
+            updatedSpeeds = true;
+        }
+    } else if (speed > currentMaxSpeeds[2].speed) {
+        if (!currentMaxSpeeds.some(m => Math.hypot(m.x - pos.x, m.y - pos.y, m.z - pos.z) < minD)) {
+            currentMaxSpeeds[2] = { speed, x: pos.x, y: pos.y, z: pos.z };
+            currentMaxSpeeds.sort((a, b) => b.speed - a.speed);
+            updatedSpeeds = true;
+        }
+    }
+    if (updatedSpeeds) {
+        simMetrics.boidMaxSpeeds.set(id, currentMaxSpeeds);
+    }
+
+    // Personal Max Deceleration Tracker
+    const decel = prevSpeed.current - speed;
+    prevSpeed.current = speed;
+
+    if (decel > 0 && speedRatio > 0.1) {
+        const currentMaxDecels = simMetrics.boidMaxDecels.get(id) || [];
+        let updatedDecels = false;
+        
+        if (currentMaxDecels.length < 3) {
+            if (!currentMaxDecels.some(m => Math.hypot(m.x - pos.x, m.y - pos.y, m.z - pos.z) < minD)) {
+                currentMaxDecels.push({ decel, x: pos.x, y: pos.y, z: pos.z });
+                currentMaxDecels.sort((a, b) => b.decel - a.decel);
+                updatedDecels = true;
+            }
+        } else if (decel > currentMaxDecels[2].decel) {
+            if (!currentMaxDecels.some(m => Math.hypot(m.x - pos.x, m.y - pos.y, m.z - pos.z) < minD)) {
+                currentMaxDecels[2] = { decel, x: pos.x, y: pos.y, z: pos.z };
+                currentMaxDecels.sort((a, b) => b.decel - a.decel);
+                updatedDecels = true;
+            }
+        }
+        if (updatedDecels) {
+            simMetrics.boidMaxDecels.set(id, currentMaxDecels);
+        }
     }
 
     if (isGrounded) {
@@ -263,66 +316,88 @@ export function Boid({ id, index }: { id: string, index: number }) {
               simMetrics.deathMarkers.push({ id: id + '-' + Date.now(), x: pos.x, y: pos.y, z: pos.z, isKill: false });
               respawning.current = true;
               simMetrics.boidHealths.set(id, settings.baseHealth);
+              if (textRef.current) textRef.current.visible = false;
+              if (arrowRef.current) arrowRef.current.visible = false;
+              if (radarGroupRef.current) radarGroupRef.current.visible = false;
+              return;
           }
        }
        // ALWAYS update prevNormal to current surface normal (whether we just landed or were already grounded)
        prevNormal.current.copy(_surfaceNormal);
        wasGrounded.current = true;
 
-       // --- Lidar Edge Avoidance (Dynamic Terrain Safe) ---
-       // CRUCIAL: Boids require physical space to execute a turn. We map the warning distance to their turning radius!
+       // --- Omnidirectional Edge Detection & Safe Direction Finding ---
+       // Instead of casting a narrow forward fan and guessing left/right, we scan 360° around
+       // the boid to build a complete map of where ground exists. When danger is detected,
+       // the escape direction is the AVERAGE of all safe directions — this naturally handles
+       // corners (safe = backward), edges (safe = away from edge), and narrow ridges.
        const maxTurnRateRad = settings.maxTurnRateDeg * (Math.PI / 180);
        const physicalTurnRadius = speed / Math.max(0.1, maxTurnRateRad); 
-       // Capped at 50 to prevent shooting rays totally outside the curvature of smaller arenas at high speeds!
-       const lookAheadDist = Math.min(50.0 * settings.arenaScale, Math.max(physicalTurnRadius * (settings.lookAheadDist * 1.5), speed * 0.1));
+       const lookAheadDist = Math.max(physicalTurnRadius * settings.lookAheadDist, speed * 0.1, 3.0);
+       const lidarElevation = Math.max(10.0, lookAheadDist * 0.25);
        
-       _lidarOrigin.copy(pos).add(direction.clone().multiplyScalar(lookAheadDist));
-       // Elevate the Lidar 10 meters perpendicular to the surface BEFORE shooting back down!
-       _lidarOrigin.add(_surfaceNormal.clone().multiplyScalar(10.0));
+       // Cast 12 rays every 30° around the boid
+       const numScanRays = 12;
+       const scanStep = (2 * Math.PI) / numScanRays;
+       let forwardMissCount = 0;     // Rays within ±60° of forward that miss
+       const safeDirAccum = new THREE.Vector3(0, 0, 0);
+       let safeRayCount = 0;
        
-       const lidarRay = new rapier.Ray(_lidarOrigin, _surfaceNormal.clone().negate());
-       const lidarHit = world.castRay(lidarRay, 20.0, true, undefined, interactionGroups(0, [0]), undefined, body as any);
+       for (let s = 0; s < numScanRays; s++) {
+           const angle = s * scanStep; // 0°, 30°, 60°, ... 330°
+           const scanDir = direction.clone().applyAxisAngle(_surfaceNormal, angle);
+           _lidarOrigin.set(pos.x, pos.y, pos.z)
+               .add(scanDir.clone().multiplyScalar(lookAheadDist))
+               .add(_surfaceNormal.clone().multiplyScalar(lidarElevation));
+           const scanRay = new rapier.Ray(_lidarOrigin, _surfaceNormal.clone().negate());
+           const scanHit = world.castRay(scanRay, lidarElevation * 3.0, true, undefined, interactionGroups(0, [0]), undefined, body as any);
+           
+           if (!scanHit) {
+               // No ground in this direction
+               const absAngle = angle <= Math.PI ? angle : (2 * Math.PI - angle);
+               if (absAngle < Math.PI / 3) { // Within ±60° of forward
+                   forwardMissCount++;
+               }
+           } else {
+               // Ground exists in this direction — accumulate for safe direction finding
+               safeDirAccum.add(scanDir);
+               safeRayCount++;
+           }
+       }
        
        // Compute projected gravity — used by energy management AND state handlers.
-       // projectedGravity = component of world gravity on the surface tangent plane.
-       // On flat surfaces, this is ~zero. On slopes, it points downhill.
        const projectedGravity = gravityDir.clone().sub(
          _surfaceNormal.clone().multiplyScalar(gravityDir.dot(_surfaceNormal))
        );
        const hasSlope = projectedGravity.lengthSq() > 0.01;
-       if (!hasSlope) projectedGravity.copy(_targetDir); // Flat fallback
+       if (!hasSlope) projectedGravity.copy(_targetDir);
 
-       if (!lidarHit) {
-            // DANGER: We are heading off a cliff! Priority 1 override.
-            // jinkTimer is repurposed as a cooldown to lock in the escape direction
-            if (aiState.current !== 'EVADE' || jinkTimer.current <= 0) {
-                aiState.current = 'EVADE';
-                
-                // Force evasion timer to ensure we complete the turn
-                evadeTimer.current = 1.0; 
-                jinkTimer.current = 1.0; // Lock the cliff-escape angle for up to 1 second
-                
-                const leftDir = direction.clone().applyAxisAngle(_surfaceNormal, Math.PI / 4);
-                const rightDir = direction.clone().applyAxisAngle(_surfaceNormal, -Math.PI / 4);
-                
-                const posVec = new THREE.Vector3(pos.x, pos.y, pos.z);
-                const leftOrigin = posVec.clone().add(leftDir.multiplyScalar(lookAheadDist)).add(_surfaceNormal.clone().multiplyScalar(10.0));
-                const rightOrigin = posVec.clone().add(rightDir.multiplyScalar(lookAheadDist)).add(_surfaceNormal.clone().multiplyScalar(10.0));
-
-                const leftHit = world.castRay(new rapier.Ray(leftOrigin, _surfaceNormal.clone().negate()), 20.0, true, undefined, interactionGroups(0, [0]), undefined, body as any);
-                const rightHit = world.castRay(new rapier.Ray(rightOrigin, _surfaceNormal.clone().negate()), 20.0, true, undefined, interactionGroups(0, [0]), undefined, body as any);
-                
-                 if (leftHit && !rightHit) evadeSpinDir.current = 1;
-                 else if (rightHit && !leftHit) evadeSpinDir.current = -1;
-                 else evadeSpinDir.current = Math.random() > 0.5 ? 1 : -1;
-                 
-                 // Immediately lock in a 120-degree escape coordinate on the surface relative to where we currently face!
-                 // This prevents the mathematical trap where _targetDir chasing _idealDir creates an infinite circle.
-                 evadeTargetDir.current.copy(_targetDir).applyAxisAngle(_surfaceNormal, evadeSpinDir.current * (Math.PI / 1.5)).normalize();
-             } else {
-                 // Keep the evasion timer alive as long as we are still in danger of the cliff
-                 evadeTimer.current = Math.max(evadeTimer.current, 0.2);
-             }
+       const edgeDanger = forwardMissCount > 0;
+       if (edgeDanger) {
+            // DANGER: Forward ground is missing. Steer toward the safest direction.
+            aiState.current = 'EVADE';
+            evadeTimer.current = Math.max(evadeTimer.current, 1.0);
+            
+            if (safeRayCount > 0) {
+                // The average of all safe directions naturally points toward open ground.
+                // In corners: rear rays are safe → average points backward.
+                // At edges: side rays are safe → average points away from edge.
+                safeDirAccum.normalize();
+                // Project onto surface tangent plane
+                safeDirAccum.sub(_surfaceNormal.clone().multiplyScalar(safeDirAccum.dot(_surfaceNormal)));
+                if (safeDirAccum.lengthSq() > 0.001) {
+                    evadeTargetDir.current.copy(safeDirAccum.normalize());
+                }
+            } else {
+                // No safe direction found anywhere — emergency full U-turn
+                evadeTargetDir.current.copy(direction).negate();
+                evadeTargetDir.current.sub(_surfaceNormal.clone().multiplyScalar(
+                    evadeTargetDir.current.dot(_surfaceNormal)
+                ));
+                if (evadeTargetDir.current.lengthSq() > 0.001) {
+                    evadeTargetDir.current.normalize();
+                }
+            }
         } else {
              // SAFE FROM TERRAIN!
              jinkTimer.current = 0; // Reset cliff escape lock
@@ -702,6 +777,31 @@ export function Boid({ id, index }: { id: string, index: number }) {
             textRef.current.visible = false;
         }
 
+        // --- RADARS VISUALIZER ---
+        if (settings.showRadars && radarGroupRef.current && radialMeshRef.current && coneMeshRef.current) {
+            radarGroupRef.current.position.set(pos.x, pos.y, pos.z);
+            
+            // Point the group in the boid's forward direction
+            const lookAtTarget = new THREE.Vector3(pos.x + _targetDir.x, pos.y + _targetDir.y, pos.z + _targetDir.z);
+            radarGroupRef.current.lookAt(lookAtTarget);
+            radarGroupRef.current.visible = true;
+
+            // Radial radar disk scale
+            radialMeshRef.current.scale.set(settings.radarRadius, settings.radarRadius, 1);
+            
+            // Frontal Cone radar scale & position
+            // The cone base should be at the boid (Z=0), and tip at Z=radarFrontalLength.
+            // Cone volume is inherently centered at 0, spans from -height/2 to +height/2 on its local Y axis.
+            const angle = Math.acos(settings.radarFrontalAngle);
+            const radiusAtBase = Math.tan(angle) * settings.radarFrontalLength;
+            
+            coneMeshRef.current.scale.set(radiusAtBase, settings.radarFrontalLength, radiusAtBase);
+            coneMeshRef.current.position.set(0, 0, settings.radarFrontalLength / 2);
+            
+        } else if (radarGroupRef.current) {
+            radarGroupRef.current.visible = false;
+        }
+
         // --- APPLY LINEAR MOTOR ---
         if (targetWeight > 0.1 && !isNaN(_targetDir.x)) {
             // Slider is Acceleration (m/s²). Force = Mass * Acceleration
@@ -839,7 +939,26 @@ export function Boid({ id, index }: { id: string, index: number }) {
           </mesh>
         )}
       </RigidBody>
-
+      
+      {/* Radar Visualizers (outside RigidBody to freely set rotation/scale without physics side effects) */}
+      <group ref={radarGroupRef} visible={false}>
+          {/* Radial Radar - XZ plane */}
+          <mesh ref={radialMeshRef} rotation={[-Math.PI / 2, 0, 0]}>
+              <circleGeometry args={[1, 32]} />
+              <meshBasicMaterial color="#10b981" transparent opacity={0.1} side={THREE.DoubleSide} />
+          </mesh>
+          
+          {/* Frontal Radar Cone.
+              We rotate it by Math.PI / 2 on X, so its tip points along +Z. 
+              Position is adjusted dynamically in useFrame so its base is at origin. 
+          */}
+          <mesh ref={coneMeshRef} rotation={[-Math.PI / 2, 0, 0]}>
+              <coneGeometry args={[1, 1, 16]} />
+              <meshBasicMaterial color="#10b981" transparent opacity={0.15} wireframe />
+          </mesh>
+      </group>
+      
+      {/* Target Arrow and Name Tags (outside RigidBody) */} 
       <arrowHelper 
           ref={arrowRef} 
           args={[new THREE.Vector3(1,0,0), new THREE.Vector3(0,0,0), 3.0, aiStats.color]} 

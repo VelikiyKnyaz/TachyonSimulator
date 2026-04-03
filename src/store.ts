@@ -9,7 +9,8 @@ interface SimulationMetrics {
   boidStates: Map<string, string>;
   boidHealths: Map<string, number>;
   deathMarkers: {id: string | number, x: number, y: number, z: number, isKill: boolean}[];
-  boidMaxSpeeds: Map<string, {speed: number, x: number, y: number, z: number}>;
+  boidMaxSpeeds: Map<string, {speed: number, x: number, y: number, z: number}[]>;
+  boidMaxDecels: Map<string, {decel: number, x: number, y: number, z: number}[]>;
   kills: Record<string, number>;
   deaths: Record<string, number>;
   shotsFired: number;
@@ -30,6 +31,7 @@ export const simMetrics: SimulationMetrics = {
   boidHealths: new Map(),
   deathMarkers: [],
   boidMaxSpeeds: new Map(),
+  boidMaxDecels: new Map(),
   kills: {},
   deaths: {},
   shotsFired: 0,
@@ -62,6 +64,7 @@ interface SimulationStore {
   showDeathMarkers: boolean;
   showKillMarkers: boolean;
   showSpeedRecords: boolean;
+  showRadars: boolean;
   debugSize: number;
   motorPower: number;
   maxTurnRateDeg: number;
@@ -116,6 +119,7 @@ interface SimulationStore {
   toggleDeathMarkers: () => void;
   toggleKillMarkers: () => void;
   toggleSpeedRecords: () => void;
+  toggleRadars: () => void;
   spawnProjectile: (proj: any) => void;
   removeProjectile: (id: string) => void;
   selectedBoidId: string | null;
@@ -133,7 +137,7 @@ export const useSimulationStore = create<SimulationStore>((set) => ({
   
   // Default values copied from user preferences
   maxSpeedCap: 500.0,
-  turnPenalty: 0.5,
+  turnPenalty: 1.0,
   evasionTurnAngle: 0.5,
   lookAheadDist: 1.0,
   centripetalGrip: 1.0,
@@ -146,20 +150,21 @@ export const useSimulationStore = create<SimulationStore>((set) => ({
   showDeathMarkers: true,
   showKillMarkers: true,
   showSpeedRecords: false,
+  showRadars: false,
   debugSize: 3.0,
   motorPower: 12.0,
   maxTurnRateDeg: 120.0,
   
-  baseHealth: 500.0,
-  huntConeCone: 0.5,
+  baseHealth: 200.0,
+  huntConeCone: 0.85,
   fireRateDelay: 0.1,
   overheatCooldown: 5.0,
   projectileSpeed: 120.0,
   evasionCpaRadius: 5.0,
   
-  radarRadius: 100.0,
-  radarFrontalLength: 250.0,
-  radarFrontalAngle: 0.5,
+  radarRadius: 65.0,
+  radarFrontalLength: 125.0,
+  radarFrontalAngle: 0.866,  // cos(30°) → 60° full cone
   initialSpeed: 50.0,
 
   setAgentCount: (count) => set({ agentCount: count }),
@@ -197,6 +202,7 @@ export const useSimulationStore = create<SimulationStore>((set) => ({
   toggleDeathMarkers: () => set((state) => ({ showDeathMarkers: !state.showDeathMarkers })),
   toggleKillMarkers: () => set((state) => ({ showKillMarkers: !state.showKillMarkers })),
   toggleSpeedRecords: () => set((state) => ({ showSpeedRecords: !state.showSpeedRecords })),
+  toggleRadars: () => set((state) => ({ showRadars: !state.showRadars })),
   
   spawnProjectile: (proj) => set((state) => ({ projectiles: [...state.projectiles, proj] })),
   removeProjectile: (id) => set((state) => ({ projectiles: state.projectiles.filter(p => p.id !== id) })),
@@ -212,6 +218,7 @@ export const useSimulationStore = create<SimulationStore>((set) => ({
     simMetrics.boidStates.clear();
     simMetrics.boidHealths.clear();
     simMetrics.boidMaxSpeeds.clear();
+    simMetrics.boidMaxDecels.clear();
     simMetrics.deathMarkers = [];
     simMetrics.kills = {};
     simMetrics.deaths = {};
@@ -236,6 +243,7 @@ export const useSimulationStore = create<SimulationStore>((set) => ({
     simMetrics.boidStates.clear();
     simMetrics.boidHealths.clear();
     simMetrics.boidMaxSpeeds.clear();
+    simMetrics.boidMaxDecels.clear();
     simMetrics.deathMarkers = [];
     simMetrics.shotsFired = 0;
     simMetrics.hits = 0;

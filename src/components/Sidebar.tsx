@@ -1,14 +1,13 @@
 import React from 'react';
-import { Play, RotateCcw, Box, Settings, Map, Map as MapIcon } from 'lucide-react';
+import { Play, RotateCcw, Box, Settings, Map, Map as MapIcon, Radar } from 'lucide-react';
 import { useSimulationStore } from '../store';
 
 export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
-  const { 
+  const {
     isRunning, startSimulation, resetSimulation, agentCount, setAgentCount, showCurvature, toggleCurvature, arenaScale, setArenaScale, crashTolerance, setCrashTolerance,
     // Debug Params
     maxSpeedCap, setMaxSpeedCap,
     turnPenalty, setTurnPenalty,
-    evasionTurnAngle, setEvasionTurnAngle,
     lookAheadDist, setLookAheadDist,
     centripetalGrip, setCentripetalGrip,
     baseFriction, setBaseFriction,
@@ -19,6 +18,7 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
     showDeathMarkers, toggleDeathMarkers,
     showKillMarkers, toggleKillMarkers,
     showSpeedRecords, toggleSpeedRecords,
+    showRadars, toggleRadars,
     debugSize, setDebugSize,
     motorPower, setMotorPower,
     maxTurnRateDeg, setMaxTurnRateDeg,
@@ -33,12 +33,12 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
     radarFrontalAngle, setRadarFrontalAngle,
     initialSpeed, setInitialSpeed
   } = useSimulationStore();
-  
+
   return (
-    <aside className="glass-panel" style={{ 
-      width: '320px', 
-      height: 'calc(100vh - 2rem)', 
-      margin: '1rem', 
+    <aside className="glass-panel" style={{
+      width: '320px',
+      height: 'calc(100vh - 2rem)',
+      margin: '1rem',
       padding: '1.5rem',
       display: 'flex',
       flexDirection: 'column',
@@ -62,61 +62,66 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
         <button onClick={resetSimulation} className="secondary-btn" style={{ width: '100%', marginBottom: '0.5rem' }}>
           <RotateCcw size={18} /> Reset
         </button>
-        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
-            <button 
-              className={`btn-secondary ${showCurvature ? 'active-toggle' : ''}`} 
-              onClick={toggleCurvature}
-              disabled={!arenaLoaded}
-              style={{ width: '100%', color: showCurvature ? 'var(--accent)' : '', borderColor: showCurvature ? 'var(--accent-hover)' : '' }}
-            >
-              <MapIcon size={16} /> Grid
-            </button>
-            <button 
-              className={`btn-secondary ${showNoses ? 'active-toggle' : ''}`} 
-              onClick={toggleNoses}
-              style={{ width: '100%', color: showNoses ? 'var(--success)' : '', borderColor: showNoses ? 'var(--success)' : '' }}
-            >
-              <Box size={16} /> Nose
-            </button>
-            <button 
-              className={`btn-secondary ${showStateLabels ? 'active-toggle' : ''}`} 
-              onClick={toggleStateLabels}
-              style={{ width: '100%', color: showStateLabels ? 'var(--warning)' : '', borderColor: showStateLabels ? 'var(--warning)' : '' }}
-            >
-              <Box size={16} /> State
-            </button>
-        </div>
-        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
-            <button 
-              className={`btn-secondary ${showDeathMarkers ? 'active-toggle' : ''}`} 
-              onClick={toggleDeathMarkers}
-              style={{ width: '100%', color: showDeathMarkers ? '#ef4444' : '', borderColor: showDeathMarkers ? '#ef4444' : '' }}
-            >
-              <MapIcon size={16} /> Crash
-            </button>
-            <button 
-              className={`btn-secondary ${showKillMarkers ? 'active-toggle' : ''}`} 
-              onClick={toggleKillMarkers}
-              style={{ width: '100%', color: showKillMarkers ? '#eab308' : '', borderColor: showKillMarkers ? '#eab308' : '' }}
-            >
-              <MapIcon size={16} /> Kills
-            </button>
-            <button 
-              className={`btn-secondary ${showSpeedRecords ? 'active-toggle' : ''}`} 
-              onClick={toggleSpeedRecords}
-              style={{ width: '100%', color: showSpeedRecords ? '#38bdf8' : '', borderColor: showSpeedRecords ? '#38bdf8' : '' }}
-            >
-              <MapIcon size={16} /> Recs
-            </button>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem', marginBottom: '0.5rem' }}>
+          <button
+            className={`btn-secondary ${showCurvature ? 'active-toggle' : ''}`}
+            onClick={toggleCurvature}
+            disabled={!arenaLoaded}
+            style={{ width: '100%', color: showCurvature ? 'var(--accent)' : '', borderColor: showCurvature ? 'var(--accent-hover)' : '' }}
+          >
+            <MapIcon size={16} /> Grid
+          </button>
+          <button
+            className={`btn-secondary ${showNoses ? 'active-toggle' : ''}`}
+            onClick={toggleNoses}
+            style={{ width: '100%', color: showNoses ? 'var(--success)' : '', borderColor: showNoses ? 'var(--success)' : '' }}
+          >
+            <Box size={16} /> Nose
+          </button>
+          <button
+            className={`btn-secondary ${showStateLabels ? 'active-toggle' : ''}`}
+            onClick={toggleStateLabels}
+            style={{ width: '100%', color: showStateLabels ? 'var(--warning)' : '', borderColor: showStateLabels ? 'var(--warning)' : '' }}
+          >
+            <Box size={16} /> State
+          </button>
+          <button
+            className={`btn-secondary ${showDeathMarkers ? 'active-toggle' : ''}`}
+            onClick={toggleDeathMarkers}
+            style={{ width: '100%', color: showDeathMarkers ? '#ef4444' : '', borderColor: showDeathMarkers ? '#ef4444' : '' }}
+          >
+            <MapIcon size={16} /> Crash
+          </button>
+          <button
+            className={`btn-secondary ${showKillMarkers ? 'active-toggle' : ''}`}
+            onClick={toggleKillMarkers}
+            style={{ width: '100%', color: showKillMarkers ? '#eab308' : '', borderColor: showKillMarkers ? '#eab308' : '' }}
+          >
+            <MapIcon size={16} /> Kills
+          </button>
+          <button
+            className={`btn-secondary ${showSpeedRecords ? 'active-toggle' : ''}`}
+            onClick={toggleSpeedRecords}
+            style={{ width: '100%', color: showSpeedRecords ? '#38bdf8' : '', borderColor: showSpeedRecords ? '#38bdf8' : '' }}
+          >
+            <MapIcon size={16} /> Recs
+          </button>
+          <button
+            className={`btn-secondary ${showRadars ? 'active-toggle' : ''}`}
+            onClick={toggleRadars}
+            style={{ width: '100%', color: showRadars ? '#10b981' : '', borderColor: showRadars ? '#10b981' : '' }}
+          >
+            <Radar size={16} /> Radars
+          </button>
         </div>
 
         {(showNoses || showStateLabels) && (
-            <div style={{ marginTop: '0.5rem', padding: '0.5rem', background: 'rgba(0,0,0,0.3)', borderRadius: '4px' }}>
-                <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                    <span>Debug UI Scale</span><span style={{ fontWeight: 'bold' }}>{debugSize.toFixed(1)}x</span>
-                </label>
-                <input type="range" className="slider" min="1.0" max="10.0" step="0.5" value={debugSize} onChange={(e) => setDebugSize(parseFloat(e.target.value))} style={{ width: '100%' }} />
-            </div>
+          <div style={{ marginTop: '0.5rem', padding: '0.5rem', background: 'rgba(0,0,0,0.3)', borderRadius: '4px' }}>
+            <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+              <span>Debug UI Scale</span><span style={{ fontWeight: 'bold' }}>{debugSize.toFixed(1)}x</span>
+            </label>
+            <input type="range" className="slider" min="1.0" max="10.0" step="0.5" value={debugSize} onChange={(e) => setDebugSize(parseFloat(e.target.value))} style={{ width: '100%' }} />
+          </div>
         )}
       </div>
 
@@ -124,19 +129,19 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
         <h3 style={{ fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <Settings size={16} /> Parameters
         </h3>
-        
+
         <div style={{ background: 'var(--bg-secondary)', padding: '1rem', borderRadius: '8px' }}>
           <div className="parameters-section">
             <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.875rem' }}>
               <span>Agent Count</span>
               <span style={{ fontWeight: 'bold' }}>{agentCount}</span>
             </label>
-            <input 
-              type="range" 
-              className="slider" 
-              min="1" 
-              max="50" 
-              value={agentCount} 
+            <input
+              type="range"
+              className="slider"
+              min="1"
+              max="50"
+              value={agentCount}
               disabled={isRunning}
               onChange={(e) => setAgentCount(parseInt(e.target.value))}
               style={{ width: '100%', marginBottom: '1rem' }}
@@ -146,13 +151,13 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
               <span>Arena Scale</span>
               <span style={{ fontWeight: 'bold' }}>{arenaScale.toFixed(1)}x</span>
             </label>
-            <input 
-              type="range" 
-              className="slider" 
-              min="0.1" 
-              max="10.0" 
+            <input
+              type="range"
+              className="slider"
+              min="0.1"
+              max="10.0"
               step="0.1"
-              value={arenaScale} 
+              value={arenaScale}
               disabled={!arenaLoaded || isRunning}
               onChange={(e) => setArenaScale(parseFloat(e.target.value))}
               style={{ width: '100%', marginBottom: '1rem' }}
@@ -162,8 +167,8 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
               <span>Crash Tolerance</span>
               <span style={{ fontWeight: 'bold' }}>{crashTolerance.toFixed(2)} rad</span>
             </label>
-            <input 
-              type="range" className="slider" 
+            <input
+              type="range" className="slider"
               min="0.1" max="1.5" step="0.05"
               value={crashTolerance} disabled={isRunning}
               onChange={(e) => setCrashTolerance(parseFloat(e.target.value))}
@@ -172,7 +177,7 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
 
             {/* --- AI ACCORDION MENUS --- */}
             <div style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              
+
               {/* CATEGORY 1: Physics */}
               <details style={{ padding: '0.5rem', background: 'rgba(0,0,0,0.3)', borderRadius: '4px', border: '1px solid var(--accent-hover)' }} open>
                 <summary style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--accent)', cursor: 'pointer', fontWeight: 'bold' }}>🏎️ Locomotion & Physics</summary>
@@ -219,29 +224,28 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
                 <summary style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--success)', cursor: 'pointer', fontWeight: 'bold' }}>👁️ Sensors & AI</summary>
                 <div style={{ marginTop: '0.75rem' }}>
                   <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
-                    <span>Lidar Range (x)</span><span style={{ fontWeight: 'bold' }}>{lookAheadDist.toFixed(2)}</span>
+                    <span>Edge Caution</span><span style={{ fontWeight: 'bold', color: lookAheadDist < 0.8 ? 'var(--danger)' : lookAheadDist > 1.5 ? 'var(--success)' : 'var(--warning)' }}>{lookAheadDist.toFixed(1)}x</span>
                   </label>
-                  <input type="range" className="slider" min="0.05" max="1.0" step="0.05" value={lookAheadDist} onChange={(e) => setLookAheadDist(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
+                  <input type="range" className="slider" min="0.3" max="2.5" step="0.1" value={lookAheadDist} onChange={(e) => setLookAheadDist(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
 
                   <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
                     <span>Radar Range Global (m)</span><span style={{ fontWeight: 'bold' }}>{radarRadius.toFixed(0)}</span>
                   </label>
-                  <input type="range" className="slider" min="50" max="1000" step="50" value={radarRadius} onChange={(e) => setRadarRadius(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
-                  
+                  <input type="range" className="slider" min="5" max="1000" step="5" value={radarRadius} onChange={(e) => setRadarRadius(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
+
                   <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
                     <span>Radar Frontal Range (m)</span><span style={{ fontWeight: 'bold' }}>{radarFrontalLength.toFixed(0)}</span>
                   </label>
-                  <input type="range" className="slider" min="50" max="1000" step="50" value={radarFrontalLength} onChange={(e) => setRadarFrontalLength(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
+                  <input type="range" className="slider" min="5" max="1000" step="5" value={radarFrontalLength} onChange={(e) => setRadarFrontalLength(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
 
                   <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
                     <span>Radar Frontal Cone</span><span style={{ fontWeight: 'bold' }}>{Math.round(Math.acos(radarFrontalAngle) * 180 / Math.PI * 2)}°</span>
                   </label>
-                  <input type="range" className="slider" min="-1.0" max="1.0" step="0.05" value={radarFrontalAngle} onChange={(e) => setRadarFrontalAngle(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
-
-                  <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
-                    <span>Evade U-Turn (pi)</span><span style={{ fontWeight: 'bold' }}>{evasionTurnAngle.toFixed(2)}π</span>
-                  </label>
-                  <input type="range" className="slider" min="0.1" max="1.5" step="0.05" value={evasionTurnAngle} onChange={(e) => setEvasionTurnAngle(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
+                  <input type="range" className="slider" min="5" max="145" step="1" value={Math.round(Math.acos(radarFrontalAngle) * 180 / Math.PI * 2)} onChange={(e) => {
+                    const degrees = parseFloat(e.target.value);
+                    const dot = Math.cos((degrees / 2) * (Math.PI / 180));
+                    setRadarFrontalAngle(dot);
+                  }} style={{ width: '100%', marginBottom: '0.75rem' }} />
 
                   <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
                     <span>Max Turn Rate (deg/s)</span><span style={{ fontWeight: 'bold', color: 'var(--warning)' }}>{maxTurnRateDeg.toFixed(0)}°</span>
