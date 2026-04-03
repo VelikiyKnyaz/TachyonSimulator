@@ -80,6 +80,7 @@ interface SimulationStore {
   radarFrontalLength: number;
   radarFrontalAngle: number;
   initialSpeed: number;
+  huntMinSpeed: number;
   
   setAgentCount: (count: number) => void;
   setArenaScale: (scale: number) => void;
@@ -110,6 +111,7 @@ interface SimulationStore {
   setRadarFrontalLength: (v: number) => void;
   setRadarFrontalAngle: (v: number) => void;
   setInitialSpeed: (v: number) => void;
+  setHuntMinSpeed: (v: number) => void;
   
   startSimulation: () => void;
   resetSimulation: () => void;
@@ -152,7 +154,7 @@ export const useSimulationStore = create<SimulationStore>((set) => ({
   showSpeedRecords: false,
   showRadars: false,
   debugSize: 3.0,
-  motorPower: 12.0,
+  motorPower: 25.0,
   maxTurnRateDeg: 120.0,
   
   baseHealth: 200.0,
@@ -162,10 +164,11 @@ export const useSimulationStore = create<SimulationStore>((set) => ({
   projectileSpeed: 120.0,
   evasionCpaRadius: 5.0,
   
-  radarRadius: 65.0,
-  radarFrontalLength: 125.0,
+  radarRadius: 30.0,
+  radarFrontalLength: 60.0,
   radarFrontalAngle: 0.866,  // cos(30°) → 60° full cone
   initialSpeed: 50.0,
+  huntMinSpeed: 25.0,          // Minimum forward speed to enter/stay in HUNT mode
 
   setAgentCount: (count) => set({ agentCount: count }),
   setArenaScale: (scale) => set({ arenaScale: scale }),
@@ -195,6 +198,7 @@ export const useSimulationStore = create<SimulationStore>((set) => ({
   setRadarFrontalLength: (v) => set({ radarFrontalLength: v }),
   setRadarFrontalAngle: (v) => set({ radarFrontalAngle: v }),
   setInitialSpeed: (v) => set({ initialSpeed: v }),
+  setHuntMinSpeed: (v) => set({ huntMinSpeed: v }),
   
   toggleCurvature: () => set((state) => ({ showCurvature: !state.showCurvature })),
   toggleNoses: () => set((state) => ({ showNoses: !state.showNoses })),

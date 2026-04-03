@@ -208,6 +208,12 @@ export function BoidInfoPanel() {
         colorRange={BAR_COLORS.combatPersistence} 
         description={personality.combatPersistence > 0.7 ? 'Relentless pursuer, chases until stalled' : personality.combatPersistence > 0.4 ? 'Moderate chase endurance' : 'Fire-and-forget, preserves energy'}
       />
+      <PersonalityBar 
+        label="Risk Tolerance" 
+        value={personality.riskTolerance} 
+        colorRange={BAR_COLORS.riskTolerance} 
+        description={personality.riskTolerance > 0.7 ? 'Reckless — reacts late to edges and bullets' : personality.riskTolerance > 0.4 ? 'Balanced caution' : 'Cautious — evades early, recovers from stalls sooner'}
+      />
     </div>
   );
 }

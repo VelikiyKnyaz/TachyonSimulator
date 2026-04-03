@@ -31,7 +31,8 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
     radarRadius, setRadarRadius,
     radarFrontalLength, setRadarFrontalLength,
     radarFrontalAngle, setRadarFrontalAngle,
-    initialSpeed, setInitialSpeed
+    initialSpeed, setInitialSpeed,
+    huntMinSpeed, setHuntMinSpeed
   } = useSimulationStore();
 
   return (
@@ -286,7 +287,12 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
                   <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
                     <span>Evasion CPA Radius</span><span style={{ fontWeight: 'bold', color: '#38bdf8' }}>{evasionCpaRadius.toFixed(1)}</span>
                   </label>
-                  <input type="range" className="slider" min="1.0" max="15.0" step="0.5" value={evasionCpaRadius} onChange={(e) => setEvasionCpaRadius(parseFloat(e.target.value))} style={{ width: '100%' }} />
+                  <input type="range" className="slider" min="1.0" max="15.0" step="0.5" value={evasionCpaRadius} onChange={(e) => setEvasionCpaRadius(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
+
+                  <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
+                    <span>Hunt Min Speed (m/s)</span><span style={{ fontWeight: 'bold', color: 'var(--warning)' }}>{huntMinSpeed.toFixed(0)}</span>
+                  </label>
+                  <input type="range" className="slider" min="0" max="100" step="5" value={huntMinSpeed} onChange={(e) => setHuntMinSpeed(parseFloat(e.target.value))} style={{ width: '100%' }} />
                 </div>
               </details>
 

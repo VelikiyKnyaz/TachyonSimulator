@@ -42,6 +42,12 @@ export function Boid({ id, index }: { id: string, index: number }) {
   const heat = useRef(0);         // Used for Machine-gun burst
   const prevSpeed = useRef(0);
   const wasGrounded = useRef(false);
+  const hasLanded = useRef(false);       // True after the boid touches ground for the first time after spawn/respawn
+  const groundGraceTimer = useRef(0);    // Grace period: keeps boid "grounded" for a few ms after losing raycast contact
+  const isStalling = useRef(false);      // True while in stall recovery
+  const stallRecoveryDir = useRef(new THREE.Vector3()); // Locked direction during stall recovery
+  const stallCheckPos = useRef(new THREE.Vector3());    // Position at last displacement check
+  const stallCheckTimer = useRef(0);     // Time since last displacement check
   const respawning = useRef(false);
   const [isHovered, setIsHovered] = useState(false);
   
@@ -104,6 +110,9 @@ export function Boid({ id, index }: { id: string, index: number }) {
        body.setAngvel({ x: 0, y: 0, z: 0 }, true);
        respawning.current = false;
        wasGrounded.current = false;
+       hasLanded.current = false;        // Allow spawn boost to fire on next ground contact
+       groundGraceTimer.current = 0;
+       isStalling.current = false;
        prevNormal.current.set(0, 1, 0); // Reset so we don't compare against stale normal from death location
        heat.current = 0;
        fireCooldown.current = 0;
@@ -165,30 +174,96 @@ export function Boid({ id, index }: { id: string, index: number }) {
     
     // Sensor Track logic: Spheres don't have a specific "down", we use gravity or previous known ground normal!
     const gravityDir = new THREE.Vector3(0, -1, 0);
-    const searchRayDir = wasGrounded.current ? prevNormal.current.clone().negate() : gravityDir;
     
-    const ray = new rapier.Ray(_rayOrigin, searchRayDir);
-    const hit = world.castRay(ray, 100, true, undefined, interactionGroups(0, [0]), undefined, body as any); // filterGroups: only hit arena (group 0), ignore boids and projectiles!
-
+    // --- DUAL RAYCAST FIX (Concave Surface Stability) ---
+    // On curved concave surfaces, the previous frame's normal can diverge enough that a single
+    // ray in -prevNormal misses the surface entirely. We cast TWO rays and pick the best hit:
+    //   1. Previous-normal-based ray (good for smooth slopes and walls)
+    //   2. Gravity-based ray (failsafe that always finds the floor below)
+    // This ensures the boid never loses ground contact on curves.
     let isGrounded = false;
     let groundToi = 0;
-    _surfaceNormal.copy(gravityDir.negate());
-
-    if (hit && hit.collider && hit.collider.parent() !== body) {
-      const toi = (hit as any).toi !== undefined ? (hit as any).toi : (hit as any).timeOfImpact;
-      // Radius of Ball is 0.5. Toi < 0.8 accounts for small bumps ensuring continuous grip
-      if (typeof toi === 'number' && !isNaN(toi) && toi < 0.8) {
-        isGrounded = true;
-        groundToi = toi;
-        const nHit = hit.collider.castRayAndGetNormal(ray, 100, true);
-        if (nHit !== null) {
-          _surfaceNormal.set(nHit.normal.x, nHit.normal.y, nHit.normal.z).normalize();
+    _surfaceNormal.set(0, 1, 0);
+    let bestHit: any = null;
+    let bestRay: any = null;
+    
+    if (wasGrounded.current) {
+        // Ray 1: Along previous surface normal (primary — tracks slopes accurately)
+        const normalDir = prevNormal.current.clone().negate();
+        const ray1 = new rapier.Ray(_rayOrigin, normalDir);
+        const hit1 = world.castRay(ray1, 100, true, undefined, interactionGroups(0, [0]), undefined, body as any);
+        let toi1 = Infinity;
+        if (hit1 && hit1.collider && hit1.collider.parent() !== body) {
+            const t = (hit1 as any).toi !== undefined ? (hit1 as any).toi : (hit1 as any).timeOfImpact;
+            if (typeof t === 'number' && !isNaN(t)) toi1 = t;
         }
-      }
+        
+        // Ray 2: Straight down (failsafe — always finds floor on concave curves)
+        const ray2 = new rapier.Ray(_rayOrigin, gravityDir);
+        const hit2 = world.castRay(ray2, 100, true, undefined, interactionGroups(0, [0]), undefined, body as any);
+        let toi2 = Infinity;
+        if (hit2 && hit2.collider && hit2.collider.parent() !== body) {
+            const t = (hit2 as any).toi !== undefined ? (hit2 as any).toi : (hit2 as any).timeOfImpact;
+            if (typeof t === 'number' && !isNaN(t)) toi2 = t;
+        }
+        
+        // Pick whichever ray found a closer surface
+        if (toi1 <= toi2 && toi1 < Infinity) {
+            bestHit = hit1; bestRay = ray1; groundToi = toi1;
+        } else if (toi2 < Infinity) {
+            bestHit = hit2; bestRay = ray2; groundToi = toi2;
+        }
+    } else {
+        // Not grounded: single gravity ray
+        const ray = new rapier.Ray(_rayOrigin, gravityDir);
+        const hit = world.castRay(ray, 100, true, undefined, interactionGroups(0, [0]), undefined, body as any);
+        if (hit && hit.collider && hit.collider.parent() !== body) {
+            const t = (hit as any).toi !== undefined ? (hit as any).toi : (hit as any).timeOfImpact;
+            if (typeof t === 'number' && !isNaN(t)) { bestHit = hit; bestRay = ray; groundToi = t; }
+        }
+    }
+    
+    // Evaluate grounding from the best hit
+    // Radius of Ball is 0.5. Toi < 0.8 accounts for small bumps ensuring continuous grip
+    if (bestHit && groundToi < 0.8) {
+        isGrounded = true;
+        const nHit = bestHit.collider.castRayAndGetNormal(bestRay, 100, true);
+        if (nHit !== null) {
+            _surfaceNormal.set(nHit.normal.x, nHit.normal.y, nHit.normal.z).normalize();
+        }
     }
 
-    // Apply ground-touching spawn boost (only fires on the exact frame they establish contact with the ground)
-    if (isGrounded && !wasGrounded.current && !respawning.current) {
+    // --- EFFECTIVE GROUNDING (Raycast + Grace Timer) ---
+    // The raw `isGrounded` can flicker false for 1-2 frames on curved meshes when the
+    // raycast misses between face boundaries. `effectivelyGrounded` bridges these gaps:
+    //  - If raycast hit: grounded, reset grace timer.
+    //  - If raycast missed but was grounded recently: stay grounded for up to 150ms,
+    //    using the smoothed prevNormal as the surface normal (no fresh hit).
+    //  - If grace period expires: truly airborne.
+    // ALL grounded logic (speed, velocity projection, motor, steering) uses this flag.
+    let effectivelyGrounded = isGrounded;
+    let hasValidGroundHit = isGrounded; // True only when we have a fresh raycast hit (for position snap)
+    
+    if (isGrounded) {
+        groundGraceTimer.current = 0;
+    } else if (wasGrounded.current) {
+        // Raycast missed, but we were grounded recently — use grace period
+        groundGraceTimer.current += delta;
+        if (groundGraceTimer.current <= 0.15) {
+            effectivelyGrounded = true;
+            // Use the smoothed previous normal since we have no fresh raycast
+            _surfaceNormal.copy(prevNormal.current);
+        } else {
+            // Grace expired — truly airborne
+            wasGrounded.current = false;
+            groundGraceTimer.current = 0;
+        }
+    }
+
+    // Apply ground-touching spawn boost ONLY on the very first landing after spawn/respawn.
+    // CRITICAL: This must NOT fire on re-grounding after a brief hop on curved surfaces!
+    if (isGrounded && !hasLanded.current && !respawning.current) {
+        hasLanded.current = true;
         if (settings.initialSpeed > 0) {
             const randAngle = Math.random() * Math.PI * 2;
             let launchDir = new THREE.Vector3(Math.cos(randAngle), 0, Math.sin(randAngle));
@@ -200,7 +275,6 @@ export function Boid({ id, index }: { id: string, index: number }) {
                 targetDir.current.copy(launchDir);
                 idealDir.current.copy(launchDir);
                 
-                // Update the rawVel variable so the rest of the useFrame loop (including newVel and speed tracking) inherits this boost
                 rawVel.set(
                     launchDir.x * settings.initialSpeed,
                     launchDir.y * settings.initialSpeed,
@@ -211,13 +285,14 @@ export function Boid({ id, index }: { id: string, index: number }) {
     }
 
     // --- CLEAN VELOCITY COMPUTATION ---
-    // The physics solver applies massive impulses every step to prevent the 15G gravity from tunneling the boid.
-    // This pollutes body.linvel() with extreme, oscillatory vertical bouncing energy.
-    // We strictly project the velocity onto the local surface tangent before computing speed for the AI and UI!
-    if (isGrounded) {
+    // Speed = forward component of velocity along the boid's nose (_targetDir).
+    // This reflects real forward progress: a boid stuck on a wall or sliding backwards
+    // correctly shows ~0 or negative instead of a phantom positive magnitude.
+    // Uses effectivelyGrounded so speed stays clean even during raycast grace periods.
+    if (effectivelyGrounded) {
         const normalVelocity = rawVel.dot(_surfaceNormal);
         const cleanVel = rawVel.clone().sub(_surfaceNormal.clone().multiplyScalar(normalVelocity));
-        speed = cleanVel.length();
+        speed = cleanVel.dot(_targetDir);
     }
     
     // Out of bounds / Fall Respawn (threshold scales with arena)
@@ -301,7 +376,7 @@ export function Boid({ id, index }: { id: string, index: number }) {
         }
     }
 
-    if (isGrounded) {
+    if (effectivelyGrounded) {
        // --- GEOMETRIC CRASH DETECTION (Sharp Angle Change Between Consecutive Surfaces) ---
        // ONLY compare when the boid was continuously grounded (not the first frame of landing).
        // On the first frame of landing, just record the surface normal without checking.
@@ -322,8 +397,26 @@ export function Boid({ id, index }: { id: string, index: number }) {
               return;
           }
        }
-       // ALWAYS update prevNormal to current surface normal (whether we just landed or were already grounded)
-       prevNormal.current.copy(_surfaceNormal);
+       // --- SMOOTH NORMAL TRANSITION (Prevents Abrupt Direction Changes on Curves) ---
+       // Instead of snapping prevNormal := surfaceNormal instantly, we slerp with a max angular
+       // step per frame. This prevents the boid from violently jerking when crossing face 
+       // boundaries on low-poly curved meshes. Max ~23° per frame keeps it butter-smooth.
+       if (wasGrounded.current) {
+           const maxNormalChangePerFrame = 0.4; // ~23 degrees max normal shift per frame
+           const normalAngle = prevNormal.current.angleTo(_surfaceNormal);
+           if (normalAngle > 0.001 && normalAngle <= maxNormalChangePerFrame) {
+               prevNormal.current.copy(_surfaceNormal);
+           } else if (normalAngle > maxNormalChangePerFrame) {
+               // Slerp: rotate prevNormal toward surfaceNormal by at most maxNormalChangePerFrame
+               const slerpT = maxNormalChangePerFrame / normalAngle;
+               const q = new THREE.Quaternion().setFromUnitVectors(prevNormal.current, _surfaceNormal);
+               const partialQ = new THREE.Quaternion().identity().slerp(q, slerpT);
+               prevNormal.current.applyQuaternion(partialQ).normalize();
+           }
+       } else {
+           // First frame landing — adopt the surface normal directly (no stale comparison)
+           prevNormal.current.copy(_surfaceNormal);
+       }
        wasGrounded.current = true;
 
        // --- Omnidirectional Edge Detection & Safe Direction Finding ---
@@ -331,10 +424,15 @@ export function Boid({ id, index }: { id: string, index: number }) {
        // the boid to build a complete map of where ground exists. When danger is detected,
        // the escape direction is the AVERAGE of all safe directions — this naturally handles
        // corners (safe = backward), edges (safe = away from edge), and narrow ridges.
-       const maxTurnRateRad = settings.maxTurnRateDeg * (Math.PI / 180);
-       const physicalTurnRadius = speed / Math.max(0.1, maxTurnRateRad); 
-       const lookAheadDist = Math.max(physicalTurnRadius * settings.lookAheadDist, speed * 0.1, 3.0);
-       const lidarElevation = Math.max(10.0, lookAheadDist * 0.25);
+        const maxTurnRateRad = settings.maxTurnRateDeg * (Math.PI / 180);
+        const physicalTurnRadius = speed / Math.max(0.1, maxTurnRateRad); 
+        // riskTolerance scales edge caution: cautious pilots (low) see edges from further, reckless (high) react late
+        const personalLookAhead = settings.lookAheadDist * (1.4 - aiStats.riskTolerance * 0.8); // 0.6x to 1.4x
+        const lookAheadDist = Math.max(physicalTurnRadius * personalLookAhead, speed * 0.1, 3.0);
+        // Elevation must be high enough that scan rays on CONCAVE surfaces don't originate BELOW
+        // the rising wall surface. At 0.25x, fast boids on bowls get false edge detections
+        // because the wall climbs above the scan origin. 0.75x handles steep curvatures.
+        const lidarElevation = Math.max(10.0, lookAheadDist * 0.75);
        
        // Cast 12 rays every 30° around the boid
        const numScanRays = 12;
@@ -350,7 +448,10 @@ export function Boid({ id, index }: { id: string, index: number }) {
                .add(scanDir.clone().multiplyScalar(lookAheadDist))
                .add(_surfaceNormal.clone().multiplyScalar(lidarElevation));
            const scanRay = new rapier.Ray(_lidarOrigin, _surfaceNormal.clone().negate());
-           const scanHit = world.castRay(scanRay, lidarElevation * 3.0, true, undefined, interactionGroups(0, [0]), undefined, body as any);
+           // Cast distance must account for concave curvature: on bowls, the scan origin
+           // (offset by lookAheadDist + lidarElevation) can be very far from the actual surface.
+           const scanMaxDist = lidarElevation * 3.0 + lookAheadDist * 2.0;
+           const scanHit = world.castRay(scanRay, scanMaxDist, true, undefined, interactionGroups(0, [0]), undefined, body as any);
            
            if (!scanHit) {
                // No ground in this direction
@@ -372,7 +473,9 @@ export function Boid({ id, index }: { id: string, index: number }) {
        const hasSlope = projectedGravity.lengthSq() > 0.01;
        if (!hasSlope) projectedGravity.copy(_targetDir);
 
-       const edgeDanger = forwardMissCount > 0;
+        // Require 2+ forward misses to trigger edge danger.
+        // A single false positive is common on concave surfaces where rays overshoot the curvature.
+        const edgeDanger = forwardMissCount > 1;
        if (edgeDanger) {
             // DANGER: Forward ground is missing. Steer toward the safest direction.
             aiState.current = 'EVADE';
@@ -449,8 +552,9 @@ export function Boid({ id, index }: { id: string, index: number }) {
                  _cpaPoint.copy(_bulletRelPos).addScaledVector(_bulletRelVel, tCPA);
                  const cpaDist = _cpaPoint.length();
                  
-                 // Is this bullet within the evasion CPA radius?
-                 if (cpaDist < settings.evasionCpaRadius && cpaDist < worstCpaDist) {
+                 // riskTolerance scales CPA sensitivity: cautious pilots (low) dodge earlier at wider radius
+                 const personalCpaRadius = settings.evasionCpaRadius * (1.6 - aiStats.riskTolerance); // 0.6x to 1.3x
+                 if (cpaDist < personalCpaRadius && cpaDist < worstCpaDist) {
                      worstCpaDist = cpaDist;
                      worstCpaTime = tCPA;
                      threatOwnerId = bullet.ownerId;
@@ -459,7 +563,8 @@ export function Boid({ id, index }: { id: string, index: number }) {
                  }
              });
 
-             const bulletDanger = worstCpaDist < settings.evasionCpaRadius;
+             const personalCpaThreshold = settings.evasionCpaRadius * (1.6 - aiStats.riskTolerance);
+             const bulletDanger = worstCpaDist < personalCpaThreshold;
 
              if (bulletDanger) {
                  // EVASION TRIGGER — Detected a bullet that will pass dangerously close
@@ -471,14 +576,14 @@ export function Boid({ id, index }: { id: string, index: number }) {
                      // Set evasion timer: sustain maneuver for 0.8—1.5 seconds
                      evadeTimer.current = 0.8 + Math.random() * 0.7;
                      
-                     // Pick initial dodge direction perpendicular to threat approach
-                     evadeSpinDir.current = Math.random() > 0.5 ? 1 : -1;
+                     // Use personality-consistent dodge direction instead of random coin flip
+                     evadeSpinDir.current = aiStats.evasionDir;
                      
                      // Store threat approach for continuous jinking recalculation
                      evadeThreatDir.current.copy(_threatApproach);
                      
-                     // Aggressive boids: remember shooter for retaliation AFTER dodge
-                     if (aiStats.aggression > 0.5 && threatOwnerId) {
+                     // Aggression scales retaliation probability (0 = never, 1 = always)
+                     if (Math.random() < aiStats.aggression && threatOwnerId) {
                          evadeRetaliateId.current = threatOwnerId;
                      } else {
                          evadeRetaliateId.current = null;
@@ -512,8 +617,8 @@ export function Boid({ id, index }: { id: string, index: number }) {
                  
                  // Evasion expired — transition out
                  if (evadeTimer.current <= 0) {
-                     if (evadeRetaliateId.current && (simMetrics.boidHealths.get(evadeRetaliateId.current) ?? 0) > 0) {
-                         // Aggressive retaliation: dodge complete, now HUNT the shooter
+                     if (evadeRetaliateId.current && (simMetrics.boidHealths.get(evadeRetaliateId.current) ?? 0) > 0 && speed >= settings.huntMinSpeed) {
+                         // Aggressive retaliation: dodge complete, now HUNT the shooter (if fast enough)
                          aiState.current = 'HUNT';
                          vendettaTargetId.current = evadeRetaliateId.current;
                      } else {
@@ -534,8 +639,17 @@ export function Boid({ id, index }: { id: string, index: number }) {
                  // Slowing down erodes combat will — if you can't maintain speed, disengage.
                  const speedDisengage = 1.0 - Math.min(1.0, speedRatio * 2.0); // 0 at 50%+ speed, 1 at 0 speed
                  const disengageChance = ((1.0 - aiStats.combatPersistence) + speedDisengage) * delta * 0.3;
-                 if (Math.random() < disengageChance) {
+                 
+                 // Speed gate: MUST be going fast enough to stay in HUNT
+                 if (speed < settings.huntMinSpeed) {
                      aiState.current = 'CRUISE';
+                     vendettaTargetId.current = null;
+                 } else if (Math.random() < disengageChance) {
+                     aiState.current = 'CRUISE';
+                     // Low persistence: also drop vendetta on disengage
+                     if (aiStats.combatPersistence < 0.4) {
+                         vendettaTargetId.current = null;
+                     }
                  }
              }
         }
@@ -583,15 +697,18 @@ export function Boid({ id, index }: { id: string, index: number }) {
                 });
             }
 
-             // Omni-directional Radar: is the target near us?
-             const radarRadiusSq = settings.radarRadius * settings.radarRadius;
-             const targetInRadar = targetPos ? nearestDist < radarRadiusSq : false;
+             // Aggression scales hunt engagement: aggressive boids attack at full radar range,
+             // passive boids only engage when targets are very close (60% of radar range)
+             const engagementScale = 0.6 + aiStats.aggression * 0.4; // 0.6x to 1.0x
+             const personalRadarSq = (settings.radarRadius * engagementScale) * (settings.radarRadius * engagementScale);
+             const personalFrontalSq = (settings.radarFrontalLength * engagementScale) * (settings.radarFrontalLength * engagementScale);
              
+             const targetInRadar = targetPos ? nearestDist < personalRadarSq : false;
+              
              // Frontal Cone Radar: secondary detection area pointing exactly where we are looking
              let targetInFrontalCone = false;
              if (targetPos && !targetInRadar) {
-                 const frontalLengthSq = settings.radarFrontalLength * settings.radarFrontalLength;
-                 if (nearestDist < frontalLengthSq) {
+                 if (nearestDist < personalFrontalSq) {
                      const targetDx = targetPos.x - pos.x;
                      const targetDy = targetPos.y - pos.y;
                      const targetDz = targetPos.z - pos.z;
@@ -604,10 +721,11 @@ export function Boid({ id, index }: { id: string, index: number }) {
              }
 
              let wantsHunt = aiState.current === 'HUNT'; // Already in combat → persist
+              
+             // Speed gate: can only ENTER hunt if moving fast enough
+             const canHunt = speed >= settings.huntMinSpeed;
              
-             // Iniciar hunt basado en proximidad (radar o cono) y velocidad
-             // No more random pacifists: If they see an enemy in range, they ATTACK.
-             if ((targetInRadar || targetInFrontalCone) && aiState.current !== 'HUNT') {
+             if ((targetInRadar || targetInFrontalCone) && aiState.current !== 'HUNT' && canHunt) {
                  wantsHunt = true;
              }
 
@@ -639,8 +757,10 @@ export function Boid({ id, index }: { id: string, index: number }) {
                 // PHYSICAL REQUIREMENT: Only fire when the nose is aligned with the predicted intercept point.
                 const aimDot = _targetDir.dot(rawHuntDir);
                 
-                // Map the UI slider (0.1 to 0.95) to a physically realistic trigger discipline.
-                const triggerDiscipline = 0.75 + (settings.huntConeCone * 0.25);
+                // Map the UI slider + personality aggression to trigger discipline.
+                // High aggression = wider cone (spray & pray), low = tighter (precision)
+                const personalDiscipline = settings.huntConeCone * (1.1 - aiStats.aggression * 0.3); // aggressive loosens cone
+                const triggerDiscipline = 0.75 + (personalDiscipline * 0.25);
                 
                 if (aimDot > triggerDiscipline && fireCooldown.current <= 0) {
                     const spreadX = (Math.random() - 0.5) * 0.2;
@@ -661,7 +781,7 @@ export function Boid({ id, index }: { id: string, index: number }) {
                         shooterSpeed: speed  // Store shooter's speed at moment of firing for damage scaling
                     });
                     
-                    heat.current += 0.1;
+                     heat.current += 0.1;
                     if (heat.current >= 1.0) {
                         fireCooldown.current = settings.overheatCooldown; 
                     } else {
@@ -675,9 +795,44 @@ export function Boid({ id, index }: { id: string, index: number }) {
              if (aiState.current === 'EVADE') {
                 _idealDir.copy(evadeTargetDir.current);
              } else {
-               // CRUISE: Maintain current trajectory. Don't seek uphill or downhill.
-               // Go straight with full motor for stable acceleration.
-               _idealDir.copy(_targetDir);
+                // CRUISE: Maintain current trajectory unless stalling.
+                // --- STALL RECOVERY (DISPLACEMENT-BASED, NATURAL TURN) ---
+                // Detection: measures NET positional displacement over 0.3s.
+                // Response: sets _idealDir to downhill — the REAL turn rate constraint
+                // handles rotation naturally. No snapping, no locked directions.
+                const stallCheckInterval = 0.3;
+                const stallDisplacementThreshold = 1.5; // units in 0.3s ≈ 5 m/s net
+                const stallExitSpeed = 20.0;
+                
+                stallCheckTimer.current += delta;
+                if (stallCheckTimer.current >= stallCheckInterval) {
+                    const dx = pos.x - stallCheckPos.current.x;
+                    const dy = pos.y - stallCheckPos.current.y;
+                    const dz = pos.z - stallCheckPos.current.z;
+                    const displacement = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                    
+                    if (displacement < stallDisplacementThreshold) {
+                        isStalling.current = true;
+                    }
+                    
+                    stallCheckPos.current.set(pos.x, pos.y, pos.z);
+                    stallCheckTimer.current = 0;
+                }
+                
+                if (isStalling.current && speed > stallExitSpeed) {
+                    isStalling.current = false;
+                }
+                
+                if (isStalling.current) {
+                    // Set INTENTION to downhill — turn rate handles the actual rotation
+                    if (hasSlope) {
+                        _idealDir.copy(projectedGravity).normalize();
+                    } else {
+                        _idealDir.copy(_targetDir); // flat: keep going, motor accelerates
+                    }
+                } else {
+                    _idealDir.copy(_targetDir);
+                }
             }
         }
 
@@ -719,11 +874,11 @@ export function Boid({ id, index }: { id: string, index: number }) {
         }
 
         // --- SURFACE TANGENT PLANE VELOCITY PROJECTION ---
-        if (wasGrounded.current) {
-            const normalComponent = newVel.dot(_surfaceNormal);
-            newVel.sub(_surfaceNormal.clone().multiplyScalar(normalComponent));
-            hasVelChange = true;
-        }
+        // Strip ALL normal velocity (both inward and outward) to keep the boid sliding
+        // on the tangent plane. The 15G gravity + position snap handle surface adhesion.
+        const normalComponent = newVel.dot(_surfaceNormal);
+        newVel.sub(_surfaceNormal.clone().multiplyScalar(normalComponent));
+        hasVelChange = true;
 
         if (hasVelChange) {
             body.setLinvel(newVel, true);
@@ -810,24 +965,26 @@ export function Boid({ id, index }: { id: string, index: number }) {
         }
 
         // --- POSITION SNAP: Keep boid riding AT the surface ---
-        // CRITICAL BUG FIX: Never snap on the very first frame of landing (!wasGrounded.current)
-        // because the origin search ray was cast straight down (gravity), not perpendicular to the slope!
-        // On steep slopes, the vertical drop distance is much larger than the boid's radius, 
-        // passing this into a snap function would artificially bury them inside the terrain mesh, destroying CCD.
-        if (wasGrounded.current) {
+        // Only snap when we have a FRESH raycast hit (not during grace period where groundToi is stale).
+        // Use the actual surface normal for snapping direction.
+        if (hasValidGroundHit && wasGrounded.current) {
             const idealHeight = 0.5;
             const heightError = groundToi - idealHeight;
             if (Math.abs(heightError) > 0.01) {
+                const snapDir = _surfaceNormal.clone().negate();
                 body.setTranslation({
-                    x: pos.x + searchRayDir.x * heightError,
-                    y: pos.y + searchRayDir.y * heightError,
-                    z: pos.z + searchRayDir.z * heightError
+                    x: pos.x + snapDir.x * heightError,
+                    y: pos.y + snapDir.y * heightError,
+                    z: pos.z + snapDir.z * heightError
                 }, true);
             }
         }
         
         // --- AERODYNAMIC DRAG (Replaces Hard Speed Cap) ---
-        const currentSpeedSq = newVel.x * newVel.x + newVel.y * newVel.y + newVel.z * newVel.z;
+        // CRITICAL: Read the ACTUAL body velocity AFTER the motor impulse has been applied.
+        // Previously this used stale `newVel` (pre-motor), causing setLinvel to ERASE the motor.
+        const postMotorVel = body.linvel();
+        const currentSpeedSq = postMotorVel.x * postMotorVel.x + postMotorVel.y * postMotorVel.y + postMotorVel.z * postMotorVel.z;
         const finalSpeed = Math.sqrt(currentSpeedSq);
         
         if (currentSpeedSq > 0.1) {
@@ -839,16 +996,21 @@ export function Boid({ id, index }: { id: string, index: number }) {
             if (dragImpulse > maxMomentum * 0.9) dragImpulse = maxMomentum * 0.9;
             
             body.applyImpulse({
-                x: -(newVel.x / finalSpeed) * dragImpulse,
-                y: -(newVel.y / finalSpeed) * dragImpulse,
-                z: -(newVel.z / finalSpeed) * dragImpulse
+                x: -(postMotorVel.x / finalSpeed) * dragImpulse,
+                y: -(postMotorVel.y / finalSpeed) * dragImpulse,
+                z: -(postMotorVel.z / finalSpeed) * dragImpulse
             }, true);
         }
 
         // --- VELOCITY DIRECTION STEERING ---
-        // Uniform rate for all states — the turn rate IS the physical limit.
-        if (finalSpeed > 1.0) {
-            const velDir = new THREE.Vector3(newVel.x, newVel.y, newVel.z).normalize();
+        // CRITICAL: Re-read body velocity AFTER motor + drag to get the true current state.
+        // Use the SMOOTHED prevNormal for velocity projection to prevent jerky direction changes
+        // when the raw surface normal jumps between mesh faces on curved surfaces.
+        const smoothNormal = prevNormal.current;
+        const steerVel = body.linvel();
+        const steerSpeed = Math.sqrt(steerVel.x * steerVel.x + steerVel.y * steerVel.y + steerVel.z * steerVel.z);
+        if (steerSpeed > 1.0) {
+            const velDir = new THREE.Vector3(steerVel.x, steerVel.y, steerVel.z).normalize();
             const angleVelToNose = velDir.angleTo(_targetDir);
             
             if (angleVelToNose > 0.05) {
@@ -858,18 +1020,18 @@ export function Boid({ id, index }: { id: string, index: number }) {
                 
                 if (steerAxis.lengthSq() > 0.001) {
                     velDir.applyAxisAngle(steerAxis, steerAngle);
-                    velDir.sub(_surfaceNormal.clone().multiplyScalar(velDir.dot(_surfaceNormal))).normalize();
+                    velDir.sub(smoothNormal.clone().multiplyScalar(velDir.dot(smoothNormal))).normalize();
                     
-                    const currentSpeed = Math.sqrt(newVel.x * newVel.x + newVel.y * newVel.y + newVel.z * newVel.z);
                     body.setLinvel({
-                        x: velDir.x * currentSpeed,
-                        y: velDir.y * currentSpeed,
-                        z: velDir.z * currentSpeed
+                        x: velDir.x * steerSpeed,
+                        y: velDir.y * steerSpeed,
+                        z: velDir.z * steerSpeed
                     }, true);
                 }
             }
         }
      } else {
+        // Not effectively grounded — truly airborne (grace timer already handled above)
         wasGrounded.current = false;
      }
    });
