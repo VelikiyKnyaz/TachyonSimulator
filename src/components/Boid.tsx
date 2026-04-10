@@ -18,6 +18,7 @@ const _bulletRelVel = new THREE.Vector3();
 const _boidVel3 = new THREE.Vector3();
 const _cpaPoint = new THREE.Vector3();
 const _threatApproach = new THREE.Vector3();
+const _dangerWorldPoint = new THREE.Vector3();
 
 type BoidState = 'CRUISE' | 'HUNT' | 'EVADE';
 
@@ -28,6 +29,7 @@ export function Boid({ id, index }: { id: string, index: number }) {
   const radarGroupRef = useRef<THREE.Group>(null);
   const radialMeshRef = useRef<THREE.Mesh>(null);
   const coneMeshRef = useRef<THREE.Mesh>(null);
+  const whiskersRef = useRef<THREE.LineSegments>(null);
   const { rapier, world } = useRapier();
   const prevNormal = useRef(new THREE.Vector3(0, 1, 0));
   const aiState = useRef<BoidState>('CRUISE');
@@ -58,6 +60,10 @@ export function Boid({ id, index }: { id: string, index: number }) {
   // Deep Stateful Vectors (MUST be unique per agent)
   const targetDir = useRef(new THREE.Vector3(Math.random()-0.5, 0, Math.random()-0.5).normalize());
   const idealDir = useRef(new THREE.Vector3());
+  const boidMass = useSimulationStore(state => state.boidMass);
+  const trailBuffer = useRef<{x: number, y: number, z: number}[]>([]);
+  const prevVel = useRef(new THREE.Vector3());
+  const lifeTimer = useRef(0);
 
   // AI Personalities — Diverse psychological profiles for emergent behavior
   const aiStats = useMemo(() => {
@@ -85,11 +91,18 @@ export function Boid({ id, index }: { id: string, index: number }) {
   }, [id, aiStats]);
 
   const initialPosition = useMemo(() => {
-    const scale = useSimulationStore.getState().arenaScale;
-    const angle = Math.random() * Math.PI * 2;
-    const radius = Math.random() * 5 * scale;
-    return new THREE.Vector3(Math.cos(angle) * radius, (10 + index * 2.0) * scale, Math.sin(angle) * radius);
+    const store = useSimulationStore.getState();
+    const sp = store.spawnPoints[index];
+    if (sp) return new THREE.Vector3(sp.x, sp.y, sp.z);
+    // Fallback if no spawn point defined
+    const scale = store.arenaScale;
+    const ap = store.arenaPosition;
+    return new THREE.Vector3(ap.x, ap.y + (10 + index * 2.0) * scale, ap.z);
   }, [index]);
+
+  // Whisker Buffer Arrays (Allocated once per Boid)
+  const whiskerPositions = useMemo(() => new Float32Array(12 * 2 * 3), []);
+  const whiskerColors = useMemo(() => new Float32Array(12 * 2 * 3), []);
 
   useFrame((state, delta) => {
     if (!bodyRef.current) return;
@@ -100,12 +113,21 @@ export function Boid({ id, index }: { id: string, index: number }) {
 
     // Respawner
     if (respawning.current) {
-       // Respawn at a scaled position based on current arenaScale
-       const scale = useSimulationStore.getState().arenaScale;
-       const angle = Math.random() * Math.PI * 2;
-       const radius = Math.random() * 5 * scale;
-       const spawnY = (10 + index * 2.0) * scale;
-       body.setTranslation({ x: Math.cos(angle) * radius, y: spawnY, z: Math.sin(angle) * radius }, true);
+       const store = useSimulationStore.getState();
+       const sp = store.spawnPoints[index];
+       if (sp) {
+         // Spawn at designated point with small random offset to avoid stacking
+         const jitter = 1.0;
+         body.setTranslation({
+           x: sp.x + (Math.random() - 0.5) * jitter,
+           y: sp.y,
+           z: sp.z + (Math.random() - 0.5) * jitter
+         }, true);
+       } else {
+         const scale = store.arenaScale;
+         const ap = store.arenaPosition;
+         body.setTranslation({ x: ap.x, y: ap.y + (10 + index * 2.0) * scale, z: ap.z }, true);
+       }
        body.setLinvel({ x: 0, y: 0, z: 0 }, true);
        body.setAngvel({ x: 0, y: 0, z: 0 }, true);
        respawning.current = false;
@@ -120,25 +142,39 @@ export function Boid({ id, index }: { id: string, index: number }) {
        evadeTimer.current = 0;
        jinkTimer.current = 0;
        evadeRetaliateId.current = null;
+       trailBuffer.current = [];
+       lifeTimer.current = 0;
        return;
     }
 
     const settings = useSimulationStore.getState();
 
-    // Health Initialization & Monitoring
-    let currentHealth = simMetrics.boidHealths.get(id);
-    if (currentHealth === undefined) {
-        simMetrics.boidHealths.set(id, settings.baseHealth);
-        currentHealth = settings.baseHealth;
-    } else if (currentHealth <= 0 && !respawning.current) {
-        // KILLED by projectile damage — NOT a crash! Don't increment crashes counter.
-        // kills/deaths stats already tracked by handleProjectileHit in BoidSwarm.
-        simMetrics.deathMarkers.push({ id: `death-${Date.now()}-${id}`, x: body.translation().x, y: body.translation().y, z: body.translation().z, isKill: true });
+    const pos = body.translation();
+    const vel = body.linvel();
+    
+    const die = (isKill: boolean) => {
+        if (!isKill) simMetrics.crashes++;
+        simMetrics.deathMarkers.push({ 
+            id: `${isKill?'kill':'crash'}-${Date.now()}-${id}`, 
+            x: pos.x, y: pos.y, z: pos.z, 
+            isKill,
+            trail: isKill ? undefined : [...trailBuffer.current, {x: pos.x, y: pos.y, z: pos.z}]
+        });
         respawning.current = true;
         simMetrics.boidHealths.set(id, settings.baseHealth);
         if (textRef.current) textRef.current.visible = false;
         if (arrowRef.current) arrowRef.current.visible = false;
         if (radarGroupRef.current) radarGroupRef.current.visible = false;
+    };
+
+    let currentHealth = simMetrics.boidHealths.get(id);
+    if (currentHealth === undefined) {
+        simMetrics.boidHealths.set(id, settings.baseHealth);
+        currentHealth = settings.baseHealth;
+    } else if (currentHealth <= 0 && !respawning.current) {
+        // KILLED by projectile damage — NOT a crash!
+        console.log(`[DEATH] Boid ${id}: KILLED by projectile damage (health=${currentHealth})`);
+        die(true);
         return;
     }
 
@@ -150,17 +186,13 @@ export function Boid({ id, index }: { id: string, index: number }) {
         heat.current = Math.max(0, heat.current - (delta * 0.5)); // Natural slow cool down
     }
 
-    const pos = body.translation();
-    const vel = body.linvel();
-    
-    // CRITICAL BUG FIX (Terminal Velocity Parachute): 
-    // Gravity is 15G so they fall terrifyingly fast on spawn. If they exceed -30 m/s downward, 
-    // their distance traveled per frame exceeds their collision sphere radius (0.5m), causing them
-    // to instantly tunnel completely through thin floor meshes without Rapier detecting the hit!
-    // We cap fall speed to -28 m/s to ensure they always intersect the floor for at least 1 frame.
-    if (!wasGrounded.current && vel.y < -28) {
-        body.setLinvel({ x: vel.x, y: -28, z: vel.z }, true);
-        vel.y = -28;
+    // Terminal Velocity Cap: Prevent tunneling through thin floor meshes.
+    // At 60fps, a sphere of radius 0.5m can travel ~30m/frame at -80 m/s.
+    // Rapier's CCD should handle this, but we cap as a safety net.
+    const terminalVelocity = -80;
+    if (!wasGrounded.current && vel.y < terminalVelocity) {
+        body.setLinvel({ x: vel.x, y: terminalVelocity, z: vel.z }, true);
+        vel.y = terminalVelocity;
     }
     
     const rawVel = new THREE.Vector3(vel.x, vel.y, vel.z);
@@ -229,7 +261,14 @@ export function Boid({ id, index }: { id: string, index: number }) {
         isGrounded = true;
         const nHit = bestHit.collider.castRayAndGetNormal(bestRay, 100, true);
         if (nHit !== null) {
-            _surfaceNormal.set(nHit.normal.x, nHit.normal.y, nHit.normal.z).normalize();
+            const hitNx = nHit.normal.x, hitNy = nHit.normal.y, hitNz = nHit.normal.z;
+            // Reject normals that are nearly horizontal (mesh edge artifacts).
+            // A valid ground surface should have a significant upward component.
+            // Y > 0.3 ≈ surface tilt < 72° from horizontal — anything steeper is a wall/edge face.
+            if (hitNy > 0.3) {
+                _surfaceNormal.set(hitNx, hitNy, hitNz).normalize();
+            }
+            // else: keep previous _surfaceNormal (initialized to (0,1,0) or from prevNormal)
         }
     }
 
@@ -257,6 +296,21 @@ export function Boid({ id, index }: { id: string, index: number }) {
             // Grace expired — truly airborne
             wasGrounded.current = false;
             groundGraceTimer.current = 0;
+        }
+    }
+
+    if (!effectivelyGrounded) {
+        simMetrics.totalAirTime += delta;
+    }
+
+    // --- AIRBORNE TO GROUND CRASH DETECTION ---
+    // Evaluated BEFORE we potentially set hasLanded.current = true for the initial spawn drop
+    if (effectivelyGrounded && !wasGrounded.current && hasLanded.current && !respawning.current) {
+        // Use prevVel to get the true falling speed right before impact resolution zeroed it out.
+        if (Math.abs(prevVel.current.y) > settings.fallCrashTolerance) {
+            console.log(`[DEATH] Boid ${id}: FALL CRASH (prevVel.y=${prevVel.current.y.toFixed(2)}, tolerance=${settings.fallCrashTolerance})`);
+            die(false);
+            return;
         }
     }
 
@@ -295,15 +349,11 @@ export function Boid({ id, index }: { id: string, index: number }) {
         speed = cleanVel.dot(_targetDir);
     }
     
-    // Out of bounds / Fall Respawn (threshold scales with arena)
-    if (pos.y < -30 * settings.arenaScale) {
-        simMetrics.crashes++;
-        simMetrics.deathMarkers.push({ id: id + '-' + Date.now(), x: pos.x, y: pos.y, z: pos.z, isKill: false });
-        respawning.current = true;
-        simMetrics.boidHealths.set(id, settings.baseHealth);
-        if (textRef.current) textRef.current.visible = false;
-        if (arrowRef.current) arrowRef.current.visible = false;
-        if (radarGroupRef.current) radarGroupRef.current.visible = false;
+    // Out of bounds / Fall Respawn (threshold scales with arena, offset by arena position)
+    const fallThreshold = (settings.arenaPosition?.y ?? 0) - 30 * settings.arenaScale;
+    if (pos.y < fallThreshold) {
+        console.log(`[DEATH] Boid ${id}: FELL OFF MAP (pos.y=${pos.y.toFixed(2)}, threshold=${fallThreshold.toFixed(2)})`);
+        die(false);
         return;
     }
 
@@ -328,51 +378,68 @@ export function Boid({ id, index }: { id: string, index: number }) {
     simMetrics.boidStates.set(id, aiState.current);
     if (speed > simMetrics.maxSpeed) simMetrics.maxSpeed = speed;
 
+    const now = Date.now();
+    const trailCopy = [...trailBuffer.current, {x: pos.x, y: pos.y, z: pos.z}];
+
     // Personal Max Speed Tracker
     const currentMaxSpeeds = simMetrics.boidMaxSpeeds.get(id) || [];
     let updatedSpeeds = false;
-    const minD = 5.0; // Minimal distance between recorded markers
     
-    if (currentMaxSpeeds.length < 3) {
-        if (!currentMaxSpeeds.some(m => Math.hypot(m.x - pos.x, m.y - pos.y, m.z - pos.z) < minD)) {
-            currentMaxSpeeds.push({ speed, x: pos.x, y: pos.y, z: pos.z });
+    // Find if there is a record within the 2.0s time window
+    const recentMaxIndex = currentMaxSpeeds.findIndex(m => now - m.timestamp < 2000);
+    
+    if (recentMaxIndex !== -1) {
+        // If inside an action window, overwrite ONLY if the new speed is better
+        if (speed > currentMaxSpeeds[recentMaxIndex].speed) {
+            currentMaxSpeeds[recentMaxIndex] = { speed, x: pos.x, y: pos.y, z: pos.z, timestamp: now, trail: trailCopy };
             currentMaxSpeeds.sort((a, b) => b.speed - a.speed);
             updatedSpeeds = true;
         }
-    } else if (speed > currentMaxSpeeds[2].speed) {
-        if (!currentMaxSpeeds.some(m => Math.hypot(m.x - pos.x, m.y - pos.y, m.z - pos.z) < minD)) {
-            currentMaxSpeeds[2] = { speed, x: pos.x, y: pos.y, z: pos.z };
+    } else {
+        // Outside action window
+        if (currentMaxSpeeds.length < 3) {
+            currentMaxSpeeds.push({ speed, x: pos.x, y: pos.y, z: pos.z, timestamp: now, trail: trailCopy });
+            currentMaxSpeeds.sort((a, b) => b.speed - a.speed);
+            updatedSpeeds = true;
+        } else if (speed > currentMaxSpeeds[2].speed) {
+            currentMaxSpeeds[2] = { speed, x: pos.x, y: pos.y, z: pos.z, timestamp: now, trail: trailCopy };
             currentMaxSpeeds.sort((a, b) => b.speed - a.speed);
             updatedSpeeds = true;
         }
     }
+
     if (updatedSpeeds) {
         simMetrics.boidMaxSpeeds.set(id, currentMaxSpeeds);
     }
 
-    // Personal Max Deceleration Tracker
-    const decel = prevSpeed.current - speed;
-    prevSpeed.current = speed;
-
-    if (decel > 0 && speedRatio > 0.1) {
-        const currentMaxDecels = simMetrics.boidMaxDecels.get(id) || [];
-        let updatedDecels = false;
+    // Personal Min Speed Tracker (only active after 5 seconds of life)
+    lifeTimer.current += delta;
+    if (lifeTimer.current >= 5.0) {
+        const currentMinSpeeds = simMetrics.boidMinSpeeds.get(id) || [];
+        let updatedMins = false;
         
-        if (currentMaxDecels.length < 3) {
-            if (!currentMaxDecels.some(m => Math.hypot(m.x - pos.x, m.y - pos.y, m.z - pos.z) < minD)) {
-                currentMaxDecels.push({ decel, x: pos.x, y: pos.y, z: pos.z });
-                currentMaxDecels.sort((a, b) => b.decel - a.decel);
-                updatedDecels = true;
+        const recentMinIndex = currentMinSpeeds.findIndex(m => now - m.timestamp < 2000);
+        
+        if (recentMinIndex !== -1) {
+            if (speed < currentMinSpeeds[recentMinIndex].speed) {
+                currentMinSpeeds[recentMinIndex] = { speed, x: pos.x, y: pos.y, z: pos.z, timestamp: now, trail: trailCopy };
+                currentMinSpeeds.sort((a, b) => a.speed - b.speed);
+                updatedMins = true;
             }
-        } else if (decel > currentMaxDecels[2].decel) {
-            if (!currentMaxDecels.some(m => Math.hypot(m.x - pos.x, m.y - pos.y, m.z - pos.z) < minD)) {
-                currentMaxDecels[2] = { decel, x: pos.x, y: pos.y, z: pos.z };
-                currentMaxDecels.sort((a, b) => b.decel - a.decel);
-                updatedDecels = true;
+        } else {
+            if (currentMinSpeeds.length < 3) {
+                currentMinSpeeds.push({ speed, x: pos.x, y: pos.y, z: pos.z, timestamp: now, trail: trailCopy });
+                currentMinSpeeds.sort((a, b) => a.speed - b.speed);
+                updatedMins = true;
+            } else if (speed < currentMinSpeeds[2].speed) {
+                currentMinSpeeds[2] = { speed, x: pos.x, y: pos.y, z: pos.z, timestamp: now, trail: trailCopy };
+                currentMinSpeeds.sort((a, b) => a.speed - b.speed);
+                updatedMins = true;
             }
         }
-        if (updatedDecels) {
-            simMetrics.boidMaxDecels.set(id, currentMaxDecels);
+
+        if (updatedMins) {
+            simMetrics.boidMinSpeeds.set(id, currentMinSpeeds);
         }
     }
 
@@ -387,13 +454,8 @@ export function Boid({ id, index }: { id: string, index: number }) {
           // Small changes (smooth curves) are tolerated. Large sudden changes (walls/lips) cause crashes.
           // Speed gate: only count as crash if moving fast enough (proportional to max speed)
           if (!isNaN(angleDiff) && angleDiff > settings.crashTolerance && speedRatio > 0.7) {
-              simMetrics.crashes++;
-              simMetrics.deathMarkers.push({ id: id + '-' + Date.now(), x: pos.x, y: pos.y, z: pos.z, isKill: false });
-              respawning.current = true;
-              simMetrics.boidHealths.set(id, settings.baseHealth);
-              if (textRef.current) textRef.current.visible = false;
-              if (arrowRef.current) arrowRef.current.visible = false;
-              if (radarGroupRef.current) radarGroupRef.current.visible = false;
+              console.log(`[DEATH] Boid ${id}: GEOMETRIC CRASH (angleDiff=${angleDiff.toFixed(3)}, tolerance=${settings.crashTolerance}, speedRatio=${speedRatio.toFixed(2)})`);
+              die(false);
               return;
           }
        }
@@ -426,9 +488,10 @@ export function Boid({ id, index }: { id: string, index: number }) {
        // corners (safe = backward), edges (safe = away from edge), and narrow ridges.
         const maxTurnRateRad = settings.maxTurnRateDeg * (Math.PI / 180);
         const physicalTurnRadius = speed / Math.max(0.1, maxTurnRateRad); 
-        // riskTolerance scales edge caution: cautious pilots (low) see edges from further, reckless (high) react late
-        const personalLookAhead = settings.lookAheadDist * (1.4 - aiStats.riskTolerance * 0.8); // 0.6x to 1.4x
-        const lookAheadDist = Math.max(physicalTurnRadius * personalLookAhead, speed * 0.1, 3.0);
+        // To complete an evasion, a boid needs its physical turn radius space.
+        // The user-defined Scale multiplier and Min Base length define how the whiskers grow.
+        // We multiply directly by the global Edge Caution slider, removing AI randomness.
+        const lookAheadDist = (physicalTurnRadius * settings.whiskerScale + settings.whiskerBase) * settings.lookAheadDist;
         // Elevation must be high enough that scan rays on CONCAVE surfaces don't originate BELOW
         // the rising wall surface. At 0.25x, fast boids on bowls get false edge detections
         // because the wall climbs above the scan origin. 0.75x handles steep curvatures.
@@ -438,33 +501,85 @@ export function Boid({ id, index }: { id: string, index: number }) {
        const numScanRays = 12;
        const scanStep = (2 * Math.PI) / numScanRays;
        let forwardMissCount = 0;     // Rays within ±60° of forward that miss
+       let closestDangerAngle = Infinity;
        const safeDirAccum = new THREE.Vector3(0, 0, 0);
        let safeRayCount = 0;
        
        for (let s = 0; s < numScanRays; s++) {
            const angle = s * scanStep; // 0°, 30°, 60°, ... 330°
+           
+           const absAngle = angle <= Math.PI ? angle : (2 * Math.PI - angle);
+           // Smooth weight: 1.0 at front (0°), ~0.3 at sides/rear — never vanishingly small
+           const cosVal = Math.cos(absAngle);
+           const angleFactor = 0.3 + 0.7 * Math.max(0.0, cosVal);
+           const rayDistance = lookAheadDist * angleFactor;
+
            const scanDir = direction.clone().applyAxisAngle(_surfaceNormal, angle);
            _lidarOrigin.set(pos.x, pos.y, pos.z)
-               .add(scanDir.clone().multiplyScalar(lookAheadDist))
+               .add(scanDir.clone().multiplyScalar(rayDistance))
                .add(_surfaceNormal.clone().multiplyScalar(lidarElevation));
            const scanRay = new rapier.Ray(_lidarOrigin, _surfaceNormal.clone().negate());
            // Cast distance must account for concave curvature: on bowls, the scan origin
-           // (offset by lookAheadDist + lidarElevation) can be very far from the actual surface.
-           const scanMaxDist = lidarElevation * 3.0 + lookAheadDist * 2.0;
-           const scanHit = world.castRay(scanRay, scanMaxDist, true, undefined, interactionGroups(0, [0]), undefined, body as any);
+           // (offset by rayDistance + lidarElevation) can be very far from the actual surface.
+           const scanMaxDist = lidarElevation * 3.0 + rayDistance * 2.0;
+           const castResult = world.castRayAndGetNormal(scanRay, scanMaxDist, true, undefined, interactionGroups(0, [0]), undefined, body as any);
+           
+           let scanHit = false;
+           if (castResult && castResult.collider) {
+               const hitNormal = new THREE.Vector3(castResult.normal.x, castResult.normal.y, castResult.normal.z);
+               const normalDiff = hitNormal.angleTo(_surfaceNormal);
+               const thresholdRad = settings.wallEvasionTolerance * (Math.PI / 180);
+               if (normalDiff <= thresholdRad) {
+                   scanHit = true;
+               }
+           }
            
            if (!scanHit) {
                // No ground in this direction
-               const absAngle = angle <= Math.PI ? angle : (2 * Math.PI - angle);
                if (absAngle < Math.PI / 3) { // Within ±60° of forward
                    forwardMissCount++;
+                   if (absAngle < closestDangerAngle) {
+                       closestDangerAngle = absAngle;
+                       // Trace the ray to the hit point (wall) or max distance (edge)
+                       const hitDist = castResult ? ((castResult as any).toi ?? castResult.timeOfImpact) : scanMaxDist;
+                       const pt = scanRay.pointAt(hitDist);
+                       _dangerWorldPoint.set(pt.x, pt.y, pt.z);
+                   }
                }
-           } else {
-               // Ground exists in this direction — accumulate for safe direction finding
-               safeDirAccum.add(scanDir);
-               safeRayCount++;
-           }
-       }
+            } else {
+                // Ground exists in this direction - accumulate for safe direction finding
+                safeDirAccum.add(scanDir);
+                safeRayCount++;
+            }
+            
+            // --- Fill Raycast Visualization Buffers (runs for ALL 12 rays) ---
+            const pIndex = s * 6; // 2 vertices * 3 coords
+            whiskerPositions[pIndex] = pos.x;
+            whiskerPositions[pIndex + 1] = pos.y;
+            whiskerPositions[pIndex + 2] = pos.z;
+            
+            // Endpoint: fan out horizontally along scanDir from the boid position
+            whiskerPositions[pIndex + 3] = pos.x + scanDir.x * rayDistance;
+            whiskerPositions[pIndex + 4] = pos.y + scanDir.y * rayDistance;
+            whiskerPositions[pIndex + 5] = pos.z + scanDir.z * rayDistance;
+            
+            // Color: Only forward-cone rays (within ±60°) show red on danger.
+            // Side/rear rays don't affect navigation, so show them as dim neutral.
+            const isForwardCone = absAngle < Math.PI / 3;  // ±60°
+            let rCol: number, gCol: number, bCol: number;
+            if (isForwardCone) {
+                rCol = scanHit ? 0.0 : 1.0;
+                gCol = scanHit ? 1.0 : 0.0;
+                bCol = 0.0;
+            } else {
+                // Side/rear: dim green if safe, dim gray if miss (not alarming red)
+                rCol = scanHit ? 0.0 : 0.3;
+                gCol = scanHit ? 0.6 : 0.3;
+                bCol = scanHit ? 0.0 : 0.3;
+            }
+            whiskerColors[pIndex] = rCol; whiskerColors[pIndex + 1] = gCol; whiskerColors[pIndex + 2] = bCol;
+            whiskerColors[pIndex + 3] = rCol; whiskerColors[pIndex + 4] = gCol; whiskerColors[pIndex + 5] = bCol;
+        }
        
        // Compute projected gravity — used by energy management AND state handlers.
        const projectedGravity = gravityDir.clone().sub(
@@ -701,7 +816,9 @@ export function Boid({ id, index }: { id: string, index: number }) {
              // passive boids only engage when targets are very close (60% of radar range)
              const engagementScale = 0.6 + aiStats.aggression * 0.4; // 0.6x to 1.0x
              const personalRadarSq = (settings.radarRadius * engagementScale) * (settings.radarRadius * engagementScale);
-             const personalFrontalSq = (settings.radarFrontalLength * engagementScale) * (settings.radarFrontalLength * engagementScale);
+             // Derive frontal length from radarRadius and proportion: low proportion = cone dominates
+             const frontalLength = settings.radarRadius * (2.0 - settings.radarProportion * 1.8); // 2.0x at proportion=0, 0.2x at proportion=1
+             const personalFrontalSq = (frontalLength * engagementScale) * (frontalLength * engagementScale);
              
              const targetInRadar = targetPos ? nearestDist < personalRadarSq : false;
               
@@ -736,7 +853,7 @@ export function Boid({ id, index }: { id: string, index: number }) {
                 // Target Leading (Predator AI)
                 const targetVel = simMetrics.boidVelocities.get(nearestId) || {x: 0, y: 0, z: 0};
                 const dist = Math.sqrt(nearestDist);
-                const bulletSpeed = Math.max(speed * 1.5, settings.projectileSpeed);
+                const bulletSpeed = settings.projectileSpeed;
                 const timeToHit = dist / bulletSpeed; // Physical prediction of impact
                 
                 // Track the predicted future position
@@ -932,6 +1049,28 @@ export function Boid({ id, index }: { id: string, index: number }) {
             textRef.current.visible = false;
         }
 
+        // --- WHISKERS VISUALIZER ---
+        if (whiskersRef.current) {
+            if (settings.showRadars) {
+                whiskersRef.current.visible = true;
+                
+                if (!whiskersRef.current.geometry.hasAttribute('position')) {
+                    whiskersRef.current.geometry.setAttribute('position', new THREE.BufferAttribute(whiskerPositions, 3));
+                    whiskersRef.current.geometry.setAttribute('color', new THREE.BufferAttribute(whiskerColors, 3));
+                } else {
+                    const posAttr = whiskersRef.current.geometry.getAttribute('position') as THREE.BufferAttribute;
+                    posAttr.set(whiskerPositions);
+                    posAttr.needsUpdate = true;
+                    
+                    const colAttr = whiskersRef.current.geometry.getAttribute('color') as THREE.BufferAttribute;
+                    colAttr.set(whiskerColors);
+                    colAttr.needsUpdate = true;
+                }
+            } else {
+                whiskersRef.current.visible = false;
+            }
+        }
+
         // --- RADARS VISUALIZER ---
         if (settings.showRadars && radarGroupRef.current && radialMeshRef.current && coneMeshRef.current) {
             radarGroupRef.current.position.set(pos.x, pos.y, pos.z);
@@ -941,21 +1080,22 @@ export function Boid({ id, index }: { id: string, index: number }) {
             radarGroupRef.current.lookAt(lookAtTarget);
             radarGroupRef.current.visible = true;
 
-            // Radial radar disk scale
-            radialMeshRef.current.scale.set(settings.radarRadius, settings.radarRadius, 1);
+            // Radial radar disk scale — proportional to radarRadius, weighted by proportion
+            const radialScale = settings.radarRadius * (0.2 + settings.radarProportion * 1.8); // small at proportion=0, full at proportion=1
+            radialMeshRef.current.scale.set(radialScale, radialScale, 1);
             
-            // Frontal Cone radar scale & position
-            // The cone base should be at the boid (Z=0), and tip at Z=radarFrontalLength.
-            // Cone volume is inherently centered at 0, spans from -height/2 to +height/2 on its local Y axis.
+            // Frontal Cone — derived from proportion (inverse of radial)
+            const frontalLength = settings.radarRadius * (2.0 - settings.radarProportion * 1.8);
             const angle = Math.acos(settings.radarFrontalAngle);
-            const radiusAtBase = Math.tan(angle) * settings.radarFrontalLength;
+            const radiusAtBase = Math.tan(angle) * frontalLength;
             
-            coneMeshRef.current.scale.set(radiusAtBase, settings.radarFrontalLength, radiusAtBase);
-            coneMeshRef.current.position.set(0, 0, settings.radarFrontalLength / 2);
+            coneMeshRef.current.scale.set(radiusAtBase, frontalLength, radiusAtBase);
+            coneMeshRef.current.position.set(0, 0, frontalLength / 2);
             
         } else if (radarGroupRef.current) {
             radarGroupRef.current.visible = false;
         }
+
 
         // --- APPLY LINEAR MOTOR ---
         if (targetWeight > 0.1 && !isNaN(_targetDir.x)) {
@@ -1033,7 +1173,36 @@ export function Boid({ id, index }: { id: string, index: number }) {
      } else {
         // Not effectively grounded — truly airborne (grace timer already handled above)
         wasGrounded.current = false;
+        
+        // --- AIRBORNE AERODYNAMIC DRAG ---
+        // Only drag the HORIZONTAL component so gravity acts freely on Y.
+        // Mass-aware: heavier boids resist drag more (F=ma, same drag force, higher mass = less deceleration).
+        const airVel = body.linvel();
+        const horizSpeedSq = airVel.x * airVel.x + airVel.z * airVel.z;
+        if (horizSpeedSq > 1.0) {
+            const horizSpeed = Math.sqrt(horizSpeedSq);
+            const currentMass = boidMass || 2.0;
+            // Drag coefficient inversely proportional to mass: light boids slow faster
+            const airDragCoeff = 0.3 / currentMass;
+            const airDragImpulse = Math.min(airDragCoeff * horizSpeed * delta, horizSpeed * 0.2);
+            body.applyImpulse({
+                x: -(airVel.x / horizSpeed) * airDragImpulse,
+                y: 0, // Pure gravitational free-fall — no drag on Y
+                z: -(airVel.z / horizSpeed) * airDragImpulse
+            }, true);
+        }
      }
+
+     // --- FLIGHT RECORDER (TRAIL BUFFER) ---
+     const lastPt = trailBuffer.current[trailBuffer.current.length - 1];
+     if (!lastPt || Math.hypot(lastPt.x - pos.x, lastPt.y - pos.y, lastPt.z - pos.z) > 1.0) {
+         trailBuffer.current.push({ x: pos.x, y: pos.y, z: pos.z });
+         if (effectivelyGrounded && trailBuffer.current.length > 15) {
+             trailBuffer.current.shift();
+         }
+     }
+     
+     prevVel.current.copy(rawVel);
    });
 
   return (
@@ -1042,7 +1211,7 @@ export function Boid({ id, index }: { id: string, index: number }) {
         ref={bodyRef}
         name={`boid-${id}`}
         position={[initialPosition.x, initialPosition.y, initialPosition.z]}
-        mass={2}
+        mass={boidMass || 2.0}
         gravityScale={15.0} // Massive gravity boost to give it authority against the powerful 600N motor
         colliders={false}
         restitution={0.0}
@@ -1120,6 +1289,12 @@ export function Boid({ id, index }: { id: string, index: number }) {
           </mesh>
       </group>
       
+      {/* Topographical Whisker Beams Visualizer */}
+      <lineSegments ref={whiskersRef} visible={false}>
+         <bufferGeometry />
+         <lineBasicMaterial vertexColors={true} linewidth={2} transparent opacity={0.6} />
+      </lineSegments>
+
       {/* Target Arrow and Name Tags (outside RigidBody) */} 
       <arrowHelper 
           ref={arrowRef} 

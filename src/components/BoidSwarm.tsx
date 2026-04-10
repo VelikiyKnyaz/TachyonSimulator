@@ -45,6 +45,195 @@ function DeathMarkers() {
   );
 }
 
+const MAX_TRAIL_VERTICES = 200000;
+const _trailPositions = new Float32Array(MAX_TRAIL_VERTICES * 3);
+const _trailColors = new Float32Array(MAX_TRAIL_VERTICES * 3);
+
+const _maxSpeedTrailPositions = new Float32Array(100000 * 3);
+const _maxSpeedTrailColors = new Float32Array(100000 * 3);
+
+const _minSpeedTrailPositions = new Float32Array(100000 * 3);
+const _minSpeedTrailColors = new Float32Array(100000 * 3);
+
+function DeathTrails() {
+  const lineRef: any = useRef(null);
+  const showDeaths = useSimulationStore(state => state.showDeathMarkers);
+  const showKills = useSimulationStore(state => state.showKillMarkers);
+
+  useFrame(() => {
+    if (!lineRef.current) return;
+    const markers = simMetrics.deathMarkers;
+    let vCount = 0;
+
+    for (let i = 0; i < markers.length; i++) {
+        const m = markers[i];
+        if (!m.trail || m.trail.length < 2) continue;
+        if (m.isKill && !showKills) continue;
+        if (!m.isKill && !showDeaths) continue;
+
+        const r = m.isKill ? 0.92 : 0.94;
+        const g = m.isKill ? 0.70 : 0.27;
+        const b = m.isKill ? 0.03 : 0.27;
+
+        for (let j = 0; j < m.trail.length - 1; j++) {
+            if (vCount >= MAX_TRAIL_VERTICES) break;
+            const p1 = m.trail[j];
+            const p2 = m.trail[j+1];
+            
+            _trailPositions[vCount * 3] = p1.x;
+            _trailPositions[vCount * 3 + 1] = p1.y;
+            _trailPositions[vCount * 3 + 2] = p1.z;
+            _trailColors[vCount * 3] = r;
+            _trailColors[vCount * 3 + 1] = g;
+            _trailColors[vCount * 3 + 2] = b;
+            vCount++;
+
+            if (vCount >= MAX_TRAIL_VERTICES) break;
+            _trailPositions[vCount * 3] = p2.x;
+            _trailPositions[vCount * 3 + 1] = p2.y;
+            _trailPositions[vCount * 3 + 2] = p2.z;
+            _trailColors[vCount * 3] = r;
+            _trailColors[vCount * 3 + 1] = g;
+            _trailColors[vCount * 3 + 2] = b;
+            vCount++;
+        }
+    }
+
+    const geo = lineRef.current.geometry;
+    geo.setDrawRange(0, vCount);
+    geo.attributes.position.needsUpdate = true;
+    geo.attributes.color.needsUpdate = true;
+  });
+
+  return (
+    <lineSegments ref={lineRef} visible={showDeaths || showKills}>
+      <bufferGeometry>
+        <bufferAttribute attach="attributes-position" count={MAX_TRAIL_VERTICES} array={_trailPositions} itemSize={3} usage={THREE.DynamicDrawUsage} />
+        <bufferAttribute attach="attributes-color" count={MAX_TRAIL_VERTICES} array={_trailColors} itemSize={3} usage={THREE.DynamicDrawUsage} />
+      </bufferGeometry>
+      <lineBasicMaterial vertexColors transparent opacity={0.6} />
+    </lineSegments>
+  );
+}
+
+function MaxSpeedTrails() {
+  const lineRef: any = useRef(null);
+  const show = useSimulationStore(state => state.showSpeedRecords);
+
+  useFrame(() => {
+    if (!lineRef.current) return;
+    const markers = Array.from(simMetrics.boidMaxSpeeds.values()).flat();
+    let vCount = 0;
+
+    for (let i = 0; i < markers.length; i++) {
+        const m = markers[i];
+        if (!m.trail || m.trail.length < 2 || !show) continue;
+
+        // Bright Cyan
+        const r = 0.02;
+        const g = 0.71;
+        const b = 0.83;
+
+        for (let j = 0; j < m.trail.length - 1; j++) {
+            if (vCount >= 100000) break;
+            const p1 = m.trail[j];
+            const p2 = m.trail[j+1];
+            
+            _maxSpeedTrailPositions[vCount * 3] = p1.x;
+            _maxSpeedTrailPositions[vCount * 3 + 1] = p1.y;
+            _maxSpeedTrailPositions[vCount * 3 + 2] = p1.z;
+            _maxSpeedTrailColors[vCount * 3] = r;
+            _maxSpeedTrailColors[vCount * 3 + 1] = g;
+            _maxSpeedTrailColors[vCount * 3 + 2] = b;
+            vCount++;
+
+            if (vCount >= 100000) break;
+            _maxSpeedTrailPositions[vCount * 3] = p2.x;
+            _maxSpeedTrailPositions[vCount * 3 + 1] = p2.y;
+            _maxSpeedTrailPositions[vCount * 3 + 2] = p2.z;
+            _maxSpeedTrailColors[vCount * 3] = r;
+            _maxSpeedTrailColors[vCount * 3 + 1] = g;
+            _maxSpeedTrailColors[vCount * 3 + 2] = b;
+            vCount++;
+        }
+    }
+
+    const geo = lineRef.current.geometry;
+    geo.setDrawRange(0, vCount);
+    geo.attributes.position.needsUpdate = true;
+    geo.attributes.color.needsUpdate = true;
+  });
+
+  return (
+    <lineSegments ref={lineRef} visible={show}>
+      <bufferGeometry>
+        <bufferAttribute attach="attributes-position" count={100000} array={_maxSpeedTrailPositions} itemSize={3} usage={THREE.DynamicDrawUsage} />
+        <bufferAttribute attach="attributes-color" count={100000} array={_maxSpeedTrailColors} itemSize={3} usage={THREE.DynamicDrawUsage} />
+      </bufferGeometry>
+      <lineBasicMaterial vertexColors transparent opacity={0.6} />
+    </lineSegments>
+  );
+}
+
+function MinSpeedTrails() {
+  const lineRef: any = useRef(null);
+  const show = useSimulationStore(state => state.showSpeedRecords);
+
+  useFrame(() => {
+    if (!lineRef.current) return;
+    const markers = Array.from(simMetrics.boidMinSpeeds.values()).flat();
+    let vCount = 0;
+
+    for (let i = 0; i < markers.length; i++) {
+        const m = markers[i];
+        if (!m.trail || m.trail.length < 2 || !show) continue;
+
+        // Intense Purple (#a855f7)
+        const r = 0.66;
+        const g = 0.33;
+        const b = 0.97;
+
+        for (let j = 0; j < m.trail.length - 1; j++) {
+            if (vCount >= 100000) break;
+            const p1 = m.trail[j];
+            const p2 = m.trail[j+1];
+            
+            _minSpeedTrailPositions[vCount * 3] = p1.x;
+            _minSpeedTrailPositions[vCount * 3 + 1] = p1.y;
+            _minSpeedTrailPositions[vCount * 3 + 2] = p1.z;
+            _minSpeedTrailColors[vCount * 3] = r;
+            _minSpeedTrailColors[vCount * 3 + 1] = g;
+            _minSpeedTrailColors[vCount * 3 + 2] = b;
+            vCount++;
+
+            if (vCount >= 100000) break;
+            _minSpeedTrailPositions[vCount * 3] = p2.x;
+            _minSpeedTrailPositions[vCount * 3 + 1] = p2.y;
+            _minSpeedTrailPositions[vCount * 3 + 2] = p2.z;
+            _minSpeedTrailColors[vCount * 3] = r;
+            _minSpeedTrailColors[vCount * 3 + 1] = g;
+            _minSpeedTrailColors[vCount * 3 + 2] = b;
+            vCount++;
+        }
+    }
+
+    const geo = lineRef.current.geometry;
+    geo.setDrawRange(0, vCount);
+    geo.attributes.position.needsUpdate = true;
+    geo.attributes.color.needsUpdate = true;
+  });
+
+  return (
+    <lineSegments ref={lineRef} visible={show}>
+      <bufferGeometry>
+        <bufferAttribute attach="attributes-position" count={100000} array={_minSpeedTrailPositions} itemSize={3} usage={THREE.DynamicDrawUsage} />
+        <bufferAttribute attach="attributes-color" count={100000} array={_minSpeedTrailColors} itemSize={3} usage={THREE.DynamicDrawUsage} />
+      </bufferGeometry>
+      <lineBasicMaterial vertexColors transparent opacity={0.6} />
+    </lineSegments>
+  );
+}
+
 function SpeedRecordMarkers() {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const show = useSimulationStore(state => state.showSpeedRecords);
@@ -76,14 +265,14 @@ function SpeedRecordMarkers() {
   );
 }
 
-function DecelRecordMarkers() {
+function MinSpeedRecordMarkers() {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const show = useSimulationStore(state => state.showSpeedRecords);
   const maxRecords = 300;
 
   useFrame(() => {
     if (!meshRef.current || !show) return;
-    const markers = Array.from(simMetrics.boidMaxDecels.values()).flat();
+    const markers = Array.from(simMetrics.boidMinSpeeds.values()).flat();
 
     meshRef.current.count = Math.min(markers.length, maxRecords);
     for (let i = 0; i < meshRef.current.count; i++) {
@@ -102,7 +291,7 @@ function DecelRecordMarkers() {
   return (
     <instancedMesh ref={meshRef} args={[undefined, undefined, maxRecords]} count={0} visible={show}>
       <octahedronGeometry args={[1.5, 0]} />
-      <meshBasicMaterial color="#f97316" wireframe />
+      <meshBasicMaterial color="#a855f7" wireframe />
     </instancedMesh>
   );
 }
@@ -157,9 +346,13 @@ export function BoidSwarm() {
           />
         ))}
       </group>
+      
       <DeathMarkers />
+      <DeathTrails />
       <SpeedRecordMarkers />
-      <DecelRecordMarkers />
+      <MaxSpeedTrails />
+      <MinSpeedRecordMarkers />
+      <MinSpeedTrails />
     </>
   );
 }

@@ -4,11 +4,13 @@ import { useSimulationStore } from '../store';
 
 export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
   const {
-    isRunning, startSimulation, resetSimulation, agentCount, setAgentCount, showCurvature, toggleCurvature, arenaScale, setArenaScale, crashTolerance, setCrashTolerance,
+    isRunning, startSimulation, resetSimulation, agentCount, setAgentCount, spawnPoints, setSpawnPoint, regenerateSpawns, showCurvature, toggleCurvature, arenaScale, setArenaScale, arenaBaseScale, tareArenaScale, arenaPosition, gizmoScale, setGizmoScale, crashTolerance, setCrashTolerance, fallCrashTolerance, setFallCrashTolerance, boidMass, setBoidMass,
     // Debug Params
     maxSpeedCap, setMaxSpeedCap,
     turnPenalty, setTurnPenalty,
     lookAheadDist, setLookAheadDist,
+    whiskerBase, setWhiskerBase,
+    whiskerScale, setWhiskerScale,
     centripetalGrip, setCentripetalGrip,
     baseFriction, setBaseFriction,
     turnPenaltyMinSpeed, setTurnPenaltyMinSpeed,
@@ -29,7 +31,7 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
     baseHealth, setBaseHealth,
     evasionCpaRadius, setEvasionCpaRadius,
     radarRadius, setRadarRadius,
-    radarFrontalLength, setRadarFrontalLength,
+    radarProportion, setRadarProportion,
     radarFrontalAngle, setRadarFrontalAngle,
     initialSpeed, setInitialSpeed,
     huntMinSpeed, setHuntMinSpeed
@@ -116,14 +118,24 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
           </button>
         </div>
 
-        {(showNoses || showStateLabels) && (
-          <div style={{ marginTop: '0.5rem', padding: '0.5rem', background: 'rgba(0,0,0,0.3)', borderRadius: '4px' }}>
-            <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-              <span>Debug UI Scale</span><span style={{ fontWeight: 'bold' }}>{debugSize.toFixed(1)}x</span>
-            </label>
-            <input type="range" className="slider" min="1.0" max="10.0" step="0.5" value={debugSize} onChange={(e) => setDebugSize(parseFloat(e.target.value))} style={{ width: '100%' }} />
-          </div>
-        )}
+        <div style={{ marginTop: '0.5rem', padding: '0.5rem', background: 'rgba(0,0,0,0.3)', borderRadius: '4px' }}>
+          {(showNoses || showStateLabels) && (
+            <div style={{ marginBottom: '0.5rem' }}>
+              <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                <span>Debug UI Scale</span><span style={{ fontWeight: 'bold' }}>{debugSize.toFixed(1)}x</span>
+              </label>
+              <input type="range" className="slider" min="1.0" max="10.0" step="0.5" value={debugSize} onChange={(e) => setDebugSize(parseFloat(e.target.value))} style={{ width: '100%' }} />
+            </div>
+          )}
+          {!isRunning && (
+            <div>
+              <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                <span>Transform Gizmo Size</span><span style={{ fontWeight: 'bold' }}>{gizmoScale.toFixed(1)}x</span>
+              </label>
+              <input type="range" className="slider" min="1" max="20" step="0.5" value={gizmoScale} onChange={(e) => setGizmoScale(parseFloat(e.target.value))} style={{ width: '100%' }} />
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="settings">
@@ -145,27 +157,85 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
               value={agentCount}
               disabled={isRunning}
               onChange={(e) => setAgentCount(parseInt(e.target.value))}
-              style={{ width: '100%', marginBottom: '1rem' }}
+              style={{ width: '100%', marginBottom: '0.75rem' }}
             />
 
-            <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.875rem' }}>
+            {/* Spawn Points List */}
+            <details style={{ marginBottom: '0.75rem', padding: '0.5rem', background: 'rgba(0,0,0,0.3)', borderRadius: '4px', border: '1px solid var(--accent-hover)' }}>
+              <summary style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--accent)', cursor: 'pointer', fontWeight: 'bold', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>🎯 Spawn Points ({spawnPoints.length})</span>
+              </summary>
+              <div style={{ marginTop: '0.5rem' }}>
+                <button
+                  onClick={regenerateSpawns}
+                  disabled={isRunning}
+                  style={{ width: '100%', marginBottom: '0.5rem', padding: '0.3rem', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--text-muted)', borderRadius: '3px', color: 'var(--text-muted)', fontSize: '0.65rem', cursor: 'pointer', textTransform: 'uppercase', fontWeight: 'bold' }}
+                >
+                  ↻ Reset to Defaults
+                </button>
+                <div style={{ maxHeight: '200px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                  {spawnPoints.map((sp, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                      <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)', minWidth: '1.2rem', textAlign: 'right' }}>#{i}</span>
+                      {(['x', 'y', 'z'] as const).map((axis) => (
+                        <input
+                          key={`sp-${i}-${axis}`}
+                          type="number"
+                          step={0.5}
+                          value={parseFloat(sp[axis].toFixed(2))}
+                          disabled={isRunning}
+                          onChange={(e) => {
+                            const v = parseFloat(e.target.value);
+                            if (!isNaN(v)) setSpawnPoint(i, { ...sp, [axis]: v });
+                          }}
+                          title={`Boid #${i} ${axis.toUpperCase()}`}
+                          style={{ flex: 1, minWidth: 0, padding: '0.2rem', background: 'rgba(0,0,0,0.4)', border: `1px solid ${axis === 'x' ? '#ef4444' : axis === 'y' ? '#22c55e' : '#3b82f6'}`, borderRadius: '3px', color: 'var(--text-primary)', fontSize: '0.65rem', textAlign: 'center' }}
+                        />
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </details>
+
+            <label className="label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', fontSize: '0.875rem' }}>
               <span>Arena Scale</span>
-              <span style={{ fontWeight: 'bold' }}>{arenaScale.toFixed(1)}x</span>
+              <span style={{ fontWeight: 'bold' }}>{(arenaScale / arenaBaseScale).toFixed(2)}x{arenaBaseScale !== 1.0 && <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginLeft: '0.3rem' }}>(base: {arenaBaseScale.toFixed(3)})</span>}</span>
             </label>
-            <input
-              type="range"
-              className="slider"
-              min="0.1"
-              max="10.0"
-              step="0.1"
-              value={arenaScale}
-              disabled={!arenaLoaded || isRunning}
-              onChange={(e) => setArenaScale(parseFloat(e.target.value))}
-              style={{ width: '100%', marginBottom: '1rem' }}
-            />
+            <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center', marginBottom: '0.75rem' }}>
+              <input
+                type="range"
+                className="slider"
+                min="0.01"
+                max="5.0"
+                step="0.01"
+                value={arenaScale / arenaBaseScale}
+                disabled={!arenaLoaded || isRunning}
+                onChange={(e) => setArenaScale(parseFloat(e.target.value) * arenaBaseScale)}
+                style={{ flex: 1 }}
+              />
+              <button
+                onClick={tareArenaScale}
+                disabled={!arenaLoaded || isRunning}
+                title="Tare: set current scale as the new 1x reference"
+                style={{ padding: '0.3rem 0.5rem', background: 'rgba(0,0,0,0.4)', border: '1px solid var(--warning)', borderRadius: '4px', color: 'var(--warning)', fontSize: '0.65rem', fontWeight: 'bold', cursor: 'pointer', whiteSpace: 'nowrap' }}
+              >
+                TARE
+              </button>
+            </div>
+
+            {/* Arena Position — Read-only display (drag gizmos in viewport to modify) */}
+            <details style={{ marginBottom: '0.75rem', padding: '0.5rem', background: 'rgba(0,0,0,0.3)', borderRadius: '4px', border: '1px solid var(--accent-hover)' }}>
+              <summary style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--accent)', cursor: 'pointer', fontWeight: 'bold' }}>📐 Arena Position <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)', fontWeight: 'normal', textTransform: 'none' }}>(drag in viewport)</span></summary>
+              <div style={{ marginTop: '0.5rem', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.3rem', fontSize: '0.7rem', textAlign: 'center' }}>
+                <span style={{ color: '#ef4444' }}>X: {arenaPosition.x.toFixed(1)}</span>
+                <span style={{ color: '#22c55e' }}>Y: {arenaPosition.y.toFixed(1)}</span>
+                <span style={{ color: '#3b82f6' }}>Z: {arenaPosition.z.toFixed(1)}</span>
+              </div>
+            </details>
 
             <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.875rem' }}>
-              <span>Crash Tolerance</span>
+              <span>Geometric Crash Tolerance</span>
               <span style={{ fontWeight: 'bold' }}>{crashTolerance.toFixed(2)} rad</span>
             </label>
             <input
@@ -176,6 +246,31 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
               style={{ width: '100%', marginBottom: '1rem' }}
             />
 
+            <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.875rem' }}>
+              <span>Fall Crash Tolerance</span>
+              <span style={{ fontWeight: 'bold' }}>{fallCrashTolerance.toFixed(1)} m/s impact</span>
+            </label>
+            <input
+              type="range" className="slider"
+              min="0" max="250" step="1"
+              value={fallCrashTolerance} disabled={isRunning}
+              onChange={(e) => setFallCrashTolerance(parseFloat(e.target.value))}
+              style={{ width: '100%', marginBottom: '1rem' }}
+            />
+
+            <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.875rem' }}>
+              <span>Wall Evasion Tolerance</span>
+              <span style={{ fontWeight: 'bold' }}>{useSimulationStore(state => state.wallEvasionTolerance).toFixed(1)}° threshold</span>
+            </label>
+            <input
+              type="range" className="slider"
+              min="10" max="90" step="1"
+              value={useSimulationStore(state => state.wallEvasionTolerance)} disabled={isRunning}
+              onChange={(e) => useSimulationStore.getState().setWallEvasionTolerance(parseFloat(e.target.value))}
+              style={{ width: '100%', marginBottom: '1rem' }}
+            />
+
+
             {/* --- AI ACCORDION MENUS --- */}
             <div style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
 
@@ -183,6 +278,11 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
               <details style={{ padding: '0.5rem', background: 'rgba(0,0,0,0.3)', borderRadius: '4px', border: '1px solid var(--accent-hover)' }} open>
                 <summary style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--accent)', cursor: 'pointer', fontWeight: 'bold' }}>🏎️ Locomotion & Physics</summary>
                 <div style={{ marginTop: '0.75rem' }}>
+                  <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
+                    <span>Boid Mass</span><span style={{ fontWeight: 'bold' }}>{boidMass.toFixed(1)}</span>
+                  </label>
+                  <input type="range" className="slider" min="0.1" max="10.0" step="0.1" value={boidMass} onChange={(e) => setBoidMass(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
+
                   <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
                     <span>Acceleration (m/s²)</span><span style={{ fontWeight: 'bold' }}>{motorPower.toFixed(0)}</span>
                   </label>
@@ -230,17 +330,27 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
                   <input type="range" className="slider" min="0.3" max="2.5" step="0.1" value={lookAheadDist} onChange={(e) => setLookAheadDist(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
 
                   <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
-                    <span>Radar Range Global (m)</span><span style={{ fontWeight: 'bold' }}>{radarRadius.toFixed(0)}</span>
+                    <span>Whisker Min Base (m)</span><span style={{ fontWeight: 'bold' }}>{whiskerBase.toFixed(0)}</span>
+                  </label>
+                  <input type="range" className="slider" min="5" max="200" step="5" value={whiskerBase} onChange={(e) => setWhiskerBase(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
+
+                  <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
+                    <span>Whisker Speed Scale</span><span style={{ fontWeight: 'bold' }}>{whiskerScale.toFixed(2)}x</span>
+                  </label>
+                  <input type="range" className="slider" min="0.0" max="5.0" step="0.1" value={whiskerScale} onChange={(e) => setWhiskerScale(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
+
+                  <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
+                    <span>Radar Size (m)</span><span style={{ fontWeight: 'bold' }}>{radarRadius.toFixed(0)}</span>
                   </label>
                   <input type="range" className="slider" min="5" max="1000" step="5" value={radarRadius} onChange={(e) => setRadarRadius(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
 
                   <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
-                    <span>Radar Frontal Range (m)</span><span style={{ fontWeight: 'bold' }}>{radarFrontalLength.toFixed(0)}</span>
+                    <span>Cone ↔ Radial</span><span style={{ fontWeight: 'bold' }}>{radarProportion.toFixed(2)}</span>
                   </label>
-                  <input type="range" className="slider" min="5" max="1000" step="5" value={radarFrontalLength} onChange={(e) => setRadarFrontalLength(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
+                  <input type="range" className="slider" min="0" max="1" step="0.05" value={radarProportion} onChange={(e) => setRadarProportion(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
 
                   <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
-                    <span>Radar Frontal Cone</span><span style={{ fontWeight: 'bold' }}>{Math.round(Math.acos(radarFrontalAngle) * 180 / Math.PI * 2)}°</span>
+                    <span>Radar Cone Angle</span><span style={{ fontWeight: 'bold' }}>{Math.round(Math.acos(radarFrontalAngle) * 180 / Math.PI * 2)}°</span>
                   </label>
                   <input type="range" className="slider" min="5" max="145" step="1" value={Math.round(Math.acos(radarFrontalAngle) * 180 / Math.PI * 2)} onChange={(e) => {
                     const degrees = parseFloat(e.target.value);
@@ -282,7 +392,7 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
                   <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
                     <span>Proj. Speed (m/s)</span><span style={{ fontWeight: 'bold' }}>{projectileSpeed.toFixed(0)}</span>
                   </label>
-                  <input type="range" className="slider" min="50" max="300" step="10" value={projectileSpeed} onChange={(e) => setProjectileSpeed(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
+                  <input type="range" className="slider" min="50" max="600" step="10" value={projectileSpeed} onChange={(e) => setProjectileSpeed(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
 
                   <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
                     <span>Evasion CPA Radius</span><span style={{ fontWeight: 'bold', color: '#38bdf8' }}>{evasionCpaRadius.toFixed(1)}</span>

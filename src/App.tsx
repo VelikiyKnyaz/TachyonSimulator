@@ -6,6 +6,7 @@ import { Sidebar } from './components/Sidebar';
 import { Dashboard } from './components/Dashboard';
 import { Arena } from './components/Arena';
 import { BoidSwarm } from './components/BoidSwarm';
+import { SpawnGizmos } from './components/SpawnGizmos';
 import { CameraFollower } from './components/CameraFollower';
 import { BoidInfoPanel } from './components/BoidInfoPanel';
 import { Leaderboard } from './components/Leaderboard';
@@ -62,9 +63,9 @@ export default function App() {
             
             <Physics>
               {!arenaModel ? (
-              <RigidBody type="fixed" key={`plane-${arenaScale}`}>
+              <RigidBody type="fixed" colliders="trimesh" key={`plane-${arenaScale}`}>
                   <mesh receiveShadow position={[0, -0.5 * arenaScale, 0]}>
-                    <boxGeometry args={[200 * arenaScale, 1 * arenaScale, 200 * arenaScale]} />
+                    <cylinderGeometry args={[100 * arenaScale, 100 * arenaScale, 1 * arenaScale, 64]} />
                     <meshStandardMaterial color="#131b2f" roughness={0.8} />
                   </mesh>
                 </RigidBody>
@@ -73,6 +74,7 @@ export default function App() {
               )}
               
               <BoidSwarm />
+              <SpawnGizmos />
             </Physics>
             
             <OrbitControls makeDefault />

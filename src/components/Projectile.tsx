@@ -65,10 +65,12 @@ export function Projectile({ id, position, direction, speed, ownerId, onHit }: {
         ownerId
     });
 
-    // Out of bounds cleanup (scales with arena)
-    const arenaScale = useSimulationStore.getState().arenaScale;
+    // Out of bounds cleanup (scales with arena, offset by arena position)
+    const storeState = useSimulationStore.getState();
+    const arenaScale = storeState.arenaScale;
+    const ap = storeState.arenaPosition ?? { x: 0, y: 0, z: 0 };
     const bound = 150 * arenaScale;
-    if (pos.y < -50 * arenaScale || pos.y > bound || Math.abs(pos.x) > bound || Math.abs(pos.z) > bound) {
+    if (pos.y < ap.y - 50 * arenaScale || pos.y > ap.y + bound || Math.abs(pos.x - ap.x) > bound || Math.abs(pos.z - ap.z) > bound) {
         dead.current = true;
         return;
     }

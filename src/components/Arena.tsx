@@ -1,6 +1,7 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { useLoader } from '@react-three/fiber';
 import { RigidBody } from '@react-three/rapier';
+import { PivotControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
@@ -67,8 +68,15 @@ const StandardMaterial = new THREE.MeshStandardMaterial({
 function ArenaScene({ scene }: { scene: THREE.Object3D }) {
   const showCurvature = useSimulationStore(state => state.showCurvature);
   const arenaScale = useSimulationStore(state => state.arenaScale);
+  const arenaPosition = useSimulationStore(state => state.arenaPosition);
+  const setArenaPosition = useSimulationStore(state => state.setArenaPosition);
+  const isRunning = useSimulationStore(state => state.isRunning);
+  const gizmoScale = useSimulationStore(state => state.gizmoScale);
 
-  // Traverse the scene and configure materials/shadows
+  const lastWorldPos = useRef<{ x: number; y: number; z: number } | null>(null);
+  const [resetKey, setResetKey] = useState(0);
+
+  // Traverse the scene and configure materials/shadows (scale only — position handled by PivotControls)
   const processedScene = useMemo(() => {
     const s = scene.clone();
     s.scale.set(arenaScale, arenaScale, arenaScale);
@@ -92,10 +100,51 @@ function ArenaScene({ scene }: { scene: THREE.Object3D }) {
     return s;
   }, [scene, showCurvature, arenaScale]);
 
+  const arenaKey = `arena-${arenaScale}-${arenaPosition.x}-${arenaPosition.y}-${arenaPosition.z}`;
+
+  if (isRunning) {
+    return (
+      <RigidBody type="fixed" colliders="trimesh" key={arenaKey}>
+        <group position={[arenaPosition.x, arenaPosition.y, arenaPosition.z]}>
+          <primitive object={processedScene} />
+        </group>
+      </RigidBody>
+    );
+  }
+
   return (
-    <RigidBody type="fixed" colliders="trimesh" key={`arena-${arenaScale}`}>
-      <primitive object={processedScene} />
-    </RigidBody>
+    <PivotControls
+      key={`arena-pivot-${resetKey}`}
+      anchor={[0, 0, 0]}
+      depthTest={false}
+      scale={gizmoScale}
+      lineWidth={3}
+      activeAxes={[true, true, true]}
+      disableScaling
+      disableRotations
+      onDrag={(l, _dl, w, _dw) => {
+        const delta = new THREE.Vector3();
+        delta.setFromMatrixPosition(l);
+        lastWorldPos.current = {
+          x: arenaPosition.x + delta.x,
+          y: arenaPosition.y + delta.y,
+          z: arenaPosition.z + delta.z,
+        };
+      }}
+      onDragEnd={() => {
+        if (lastWorldPos.current) {
+          setArenaPosition(lastWorldPos.current);
+          lastWorldPos.current = null;
+          setResetKey(k => k + 1);
+        }
+      }}
+    >
+      <group position={[arenaPosition.x, arenaPosition.y, arenaPosition.z]}>
+        <RigidBody type="fixed" colliders="trimesh" key={arenaKey}>
+          <primitive object={processedScene} />
+        </RigidBody>
+      </group>
+    </PivotControls>
   );
 }
 
@@ -114,62 +163,7 @@ function ArenaGLTF({ url }: { url: string }) {
   return <ArenaScene scene={gltf.scene} />;
 }
 
-function ProceduralFlattenedBowl() {
-  const scene = useMemo(() => {
-    const geo = new THREE.PlaneGeometry(300, 300, 150, 150);
-    geo.rotateX(-Math.PI / 2);
-    const pos = geo.attributes.position;
-    for (let i = 0; i < pos.count; i++) {
-      const x = pos.getX(i);
-      const z = pos.getZ(i);
-      const y = 0.0000002 * (Math.pow(x, 4) + Math.pow(z, 4));
-      pos.setY(i, y);
-    }
-    geo.computeVertexNormals();
-    const mesh = new THREE.Mesh(geo);
-    const group = new THREE.Group();
-    group.add(mesh);
-    return group;
-  }, []);
-
-  return <ArenaScene scene={scene} />;
-}
-
-function ProceduralSkatepark() {
-  const scene = useMemo(() => {
-    const geo = new THREE.PlaneGeometry(300, 300, 150, 150);
-    geo.rotateX(-Math.PI / 2);
-    const pos = geo.attributes.position;
-    for (let i = 0; i < pos.count; i++) {
-      const x = pos.getX(i);
-      const z = pos.getZ(i);
-      
-      const baseY = 0.0000002 * (Math.pow(x, 4) + Math.pow(z, 4));
-      
-      const spine = 12 * Math.exp(-(z * z) / 200) * Math.exp(-(x * x) / 5000);
-      const volcano1 = 18 * Math.exp(-((x - 60) ** 2 + (z - 60) ** 2) / 400);
-      const volcano2 = 18 * Math.exp(-((x + 60) ** 2 + (z - 60) ** 2) / 400);
-      const volcano3 = 18 * Math.exp(-((x - 60) ** 2 + (z + 60) ** 2) / 400);
-      const volcano4 = 18 * Math.exp(-((x + 60) ** 2 + (z + 60) ** 2) / 400);
-      
-      // Add a central crater to contrast the spine
-      const crater = -10 * Math.exp(-(x * x + z * z) / 400);
-
-      pos.setY(i, baseY + spine + volcano1 + volcano2 + volcano3 + volcano4 + crater);
-    }
-    geo.computeVertexNormals();
-    const mesh = new THREE.Mesh(geo);
-    const group = new THREE.Group();
-    group.add(mesh);
-    return group;
-  }, []);
-
-  return <ArenaScene scene={scene} />;
-}
-
 export function Arena({ url, fileType }: { url: string, fileType: string }) {
-  if (fileType === 'flattened-bowl') return <ProceduralFlattenedBowl />;
-  if (fileType === 'skatepark') return <ProceduralSkatepark />;
   if (fileType === 'obj') return <ArenaOBJ url={url} />;
   if (fileType === 'fbx') return <ArenaFBX url={url} />;
   return <ArenaGLTF url={url} />;
