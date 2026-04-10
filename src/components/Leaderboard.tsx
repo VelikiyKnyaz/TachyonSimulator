@@ -3,6 +3,7 @@ import { Trophy } from 'lucide-react';
 import { simMetrics, useSimulationStore } from '../store';
 
 const BOID_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#ef4444'];
+const GREEK_LETTERS = ['Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon', 'Zeta', 'Eta', 'Theta', 'Iota', 'Kappa', 'Lambda', 'Mu', 'Nu', 'Xi', 'Omicron', 'Pi', 'Rho', 'Sigma', 'Tau', 'Upsilon', 'Phi', 'Chi', 'Psi', 'Omega'];
 
 interface LeaderboardEntry {
   id: string;
@@ -108,7 +109,7 @@ export function Leaderboard() {
         fontWeight: 700
       }}>
         <span>#</span>
-        <span>Boid</span>
+        <span>Agent</span>
         <span style={{ textAlign: 'center' }}>K</span>
         <span style={{ textAlign: 'center' }}>D</span>
         <span style={{ textAlign: 'right' }}>KDR</span>
@@ -208,7 +209,7 @@ export function Leaderboard() {
                   overflow: 'hidden',
                   textOverflow: 'ellipsis'
                 }}>
-                  Boid {entry.index + 1}
+                  {GREEK_LETTERS[entry.index % GREEK_LETTERS.length]}
                 </span>
               </div>
 

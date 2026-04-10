@@ -65,6 +65,7 @@ export function Boid({ id, index }: { id: string, index: number }) {
   const prevVel = useRef(new THREE.Vector3());
   const lifeTimer = useRef(0);
 
+
   // AI Personalities — Diverse psychological profiles for emergent behavior
   const aiStats = useMemo(() => {
     // Core personality axes (0-1 range)
@@ -350,7 +351,7 @@ export function Boid({ id, index }: { id: string, index: number }) {
     }
     
     // Out of bounds / Fall Respawn (threshold scales with arena, offset by arena position)
-    const fallThreshold = (settings.arenaPosition?.y ?? 0) - 30 * settings.arenaScale;
+    const fallThreshold = (settings.arenaPosition?.y ?? 0) - Math.max(100, 30 * settings.arenaScale);
     if (pos.y < fallThreshold) {
         console.log(`[DEATH] Boid ${id}: FELL OFF MAP (pos.y=${pos.y.toFixed(2)}, threshold=${fallThreshold.toFixed(2)})`);
         die(false);
@@ -491,11 +492,18 @@ export function Boid({ id, index }: { id: string, index: number }) {
         // To complete an evasion, a boid needs its physical turn radius space.
         // The user-defined Scale multiplier and Min Base length define how the whiskers grow.
         // We multiply directly by the global Edge Caution slider, removing AI randomness.
-        const lookAheadDist = (physicalTurnRadius * settings.whiskerScale + settings.whiskerBase) * settings.lookAheadDist;
+        const rawLookAhead = (physicalTurnRadius * settings.whiskerScale + settings.whiskerBase) * settings.lookAheadDist;
+        // --- ARENA-SCALE CAP ---
+        // On small concave arenas (bowls), a long lookAheadDist projects scan rays past the
+        // arena boundary, causing false "no ground" detections that lock boids in EVADE.
+        // Cap look-ahead to 55% of the arena's approximate playable radius.
+        const arenaRadius = 100.0 * settings.arenaScale;
+        const lookAheadDist = Math.min(rawLookAhead, arenaRadius * 0.55);
         // Elevation must be high enough that scan rays on CONCAVE surfaces don't originate BELOW
-        // the rising wall surface. At 0.25x, fast boids on bowls get false edge detections
-        // because the wall climbs above the scan origin. 0.75x handles steep curvatures.
-        const lidarElevation = Math.max(10.0, lookAheadDist * 0.75);
+        // the rising wall surface. On bowls, surface height rises QUADRATICALLY with distance,
+        // so the elevation factor must be generous. 1.5x ensures the scan origin stays above
+        // even steep concave curvatures at maximum look-ahead distance.
+        const lidarElevation = Math.max(10.0, lookAheadDist * 1.5);
        
        // Cast 12 rays every 30° around the boid
        const numScanRays = 12;
@@ -515,10 +523,19 @@ export function Boid({ id, index }: { id: string, index: number }) {
            const rayDistance = lookAheadDist * angleFactor;
 
            const scanDir = direction.clone().applyAxisAngle(_surfaceNormal, angle);
-           _lidarOrigin.set(pos.x, pos.y, pos.z)
-               .add(scanDir.clone().multiplyScalar(rayDistance))
-               .add(_surfaceNormal.clone().multiplyScalar(lidarElevation));
-           const scanRay = new rapier.Ray(_lidarOrigin, _surfaceNormal.clone().negate());
+           // --- GRAVITY-ALIGNED LIDAR (Bowl-Safe) ---
+           // OLD BUG: Elevated along _surfaceNormal and cast along -_surfaceNormal.
+           // On bowl slopes, the tilted normal caused scan origins to exit the bowl
+           // geometry. The angled ray then missed the curved surface entirely.
+           // FIX: Move to horizontal scan target, elevate along WORLD-UP, cast WORLD-DOWN.
+           // This always intersects the surface regardless of local slope angle.
+           const scanOffset = scanDir.clone().multiplyScalar(rayDistance);
+           _lidarOrigin.set(
+               pos.x + scanOffset.x,
+               pos.y + lidarElevation,
+               pos.z + scanOffset.z
+           );
+           const scanRay = new rapier.Ray(_lidarOrigin, { x: 0, y: -1, z: 0 });
            // Cast distance must account for concave curvature: on bowls, the scan origin
            // (offset by rayDistance + lidarElevation) can be very far from the actual surface.
            const scanMaxDist = lidarElevation * 3.0 + rayDistance * 2.0;
@@ -529,7 +546,13 @@ export function Boid({ id, index }: { id: string, index: number }) {
                const hitNormal = new THREE.Vector3(castResult.normal.x, castResult.normal.y, castResult.normal.z);
                const normalDiff = hitNormal.angleTo(_surfaceNormal);
                const thresholdRad = settings.wallEvasionTolerance * (Math.PI / 180);
-               if (normalDiff <= thresholdRad) {
+               // Scale tolerance with distance: distant surfaces on curves naturally diverge.
+               // At full lookAheadDist, allow 2.5x the base threshold.
+               const distScale = 1.0 + 1.5 * (rayDistance / Math.max(1.0, lookAheadDist));
+               // Accept as ground if:
+               // 1. Normal within distance-scaled tolerance, OR
+               // 2. Surface has upward component (slope < 78° = traversable ground)
+               if (normalDiff <= thresholdRad * distScale || hitNormal.y > 0.2) {
                    scanHit = true;
                }
            }
@@ -581,6 +604,7 @@ export function Boid({ id, index }: { id: string, index: number }) {
             whiskerColors[pIndex + 3] = rCol; whiskerColors[pIndex + 4] = gCol; whiskerColors[pIndex + 5] = bCol;
         }
        
+
        // Compute projected gravity — used by energy management AND state handlers.
        const projectedGravity = gravityDir.clone().sub(
          _surfaceNormal.clone().multiplyScalar(gravityDir.dot(_surfaceNormal))
@@ -876,8 +900,7 @@ export function Boid({ id, index }: { id: string, index: number }) {
                 
                 // Map the UI slider + personality aggression to trigger discipline.
                 // High aggression = wider cone (spray & pray), low = tighter (precision)
-                const personalDiscipline = settings.huntConeCone * (1.1 - aiStats.aggression * 0.3); // aggressive loosens cone
-                const triggerDiscipline = 0.75 + (personalDiscipline * 0.25);
+                const triggerDiscipline = 0.8;
                 
                 if (aimDot > triggerDiscipline && fireCooldown.current <= 0) {
                     const spreadX = (Math.random() - 0.5) * 0.2;

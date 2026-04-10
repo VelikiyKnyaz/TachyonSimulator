@@ -69,10 +69,19 @@ export function Projectile({ id, position, direction, speed, ownerId, onHit }: {
     const storeState = useSimulationStore.getState();
     const arenaScale = storeState.arenaScale;
     const ap = storeState.arenaPosition ?? { x: 0, y: 0, z: 0 };
-    const bound = 150 * arenaScale;
-    if (pos.y < ap.y - 50 * arenaScale || pos.y > ap.y + bound || Math.abs(pos.x - ap.x) > bound || Math.abs(pos.z - ap.z) > bound) {
+    // OOB bound must have a minimum floor — when arenaScale is tiny (e.g. tared external models),
+    // 150 * arenaScale can be absurdly small (1.5 units), instantly killing all projectiles.
+    const bound = Math.max(500, 150 * arenaScale);
+    if (pos.y < ap.y - bound || pos.y > ap.y + bound || Math.abs(pos.x - ap.x) > bound || Math.abs(pos.z - ap.z) > bound) {
+        console.log(`[PROJ-DEATH] ${id.slice(-8)} OOB at t=${timeAlive.current.toFixed(3)}s | pos=(${pos.x.toFixed(1)},${pos.y.toFixed(1)},${pos.z.toFixed(1)}) | vel=(${vel.x.toFixed(1)},${vel.y.toFixed(1)},${vel.z.toFixed(1)}) | speed=${Math.sqrt(vel.x*vel.x+vel.y*vel.y+vel.z*vel.z).toFixed(1)} | ap=(${ap.x.toFixed(1)},${ap.y.toFixed(1)},${ap.z.toFixed(1)}) | bound=${bound.toFixed(1)} | yMin=${(ap.y - 50*arenaScale).toFixed(1)} | checks: y<min=${pos.y < ap.y - 50*arenaScale} y>max=${pos.y > ap.y + bound} x=${Math.abs(pos.x-ap.x) > bound} z=${Math.abs(pos.z-ap.z) > bound}`);
         dead.current = true;
         return;
+    }
+    
+    // Debug: log first 3 frames of each projectile to see what happens after spawn
+    if (timeAlive.current < 0.1) {
+        const spd = Math.sqrt(vel.x*vel.x+vel.y*vel.y+vel.z*vel.z);
+        console.log(`[PROJ] ${id.slice(-8)} t=${timeAlive.current.toFixed(4)}s | pos=(${pos.x.toFixed(1)},${pos.y.toFixed(1)},${pos.z.toFixed(1)}) | vel=(${vel.x.toFixed(1)},${vel.y.toFixed(1)},${vel.z.toFixed(1)}) | speed=${spd.toFixed(1)}/${speed}`);
     }
     
     // --- CONSTANT-SPEED SURFACE-FOLLOWING ---

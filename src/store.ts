@@ -77,6 +77,8 @@ interface SimulationStore {
   turnPenalty: number;
   evasionTurnAngle: number;
   lookAheadDist: number;
+  whiskerBase: number;
+  whiskerScale: number;
   centripetalGrip: number;
   baseFriction: number;
   turnPenaltyMinSpeed: number;
@@ -176,7 +178,7 @@ export const useSimulationStore = create<SimulationStore>((set) => ({
   arenaPosition: { x: 0, y: 0, z: 0 },
   gizmoScale: 5,
   crashTolerance: 0.45,
-  fallCrashTolerance: 15.0,
+  fallCrashTolerance: 46.0,
   boidMass: 2.0,
   wallEvasionTolerance: 70.0,
 
@@ -206,7 +208,7 @@ export const useSimulationStore = create<SimulationStore>((set) => ({
   huntConeCone: 0.85,
   fireRateDelay: 0.1,
   overheatCooldown: 5.0,
-  projectileSpeed: 300.0,
+  projectileSpeed: 170.0,
   evasionCpaRadius: 5.0,
 
   radarRadius: 80.0,
