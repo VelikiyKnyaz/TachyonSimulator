@@ -15,6 +15,8 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
     baseFriction, setBaseFriction,
     turnPenaltyMinSpeed, setTurnPenaltyMinSpeed,
     turnPenaltyMaxSpeed, setTurnPenaltyMaxSpeed,
+    turnPenaltyStartTime, setTurnPenaltyStartTime,
+    turnPenaltyMaxTime, setTurnPenaltyMaxTime,
     showNoses, toggleNoses,
     showStateLabels, toggleStateLabels,
     showDeathMarkers, toggleDeathMarkers,
@@ -34,7 +36,11 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
     radarProportion, setRadarProportion,
     radarFrontalAngle, setRadarFrontalAngle,
     initialSpeed, setInitialSpeed,
-    huntMinSpeed, setHuntMinSpeed
+    huntMinSpeed, setHuntMinSpeed,
+    trajectoryWhiskerLength, setTrajectoryWhiskerLength,
+    stuckSpeedThreshold, setStuckSpeedThreshold,
+    stuckTimeout, setStuckTimeout,
+    obstacleOversteerChance, setObstacleOversteerChance
   } = useSimulationStore();
 
   return (
@@ -309,6 +315,16 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
                   <input type="range" className="slider" min="10.0" max="500.0" step="5" value={turnPenaltyMaxSpeed} onChange={(e) => setTurnPenaltyMaxSpeed(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
 
                   <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
+                    <span>Brake Grace (s)</span><span style={{ fontWeight: 'bold', color: '#22d3ee' }}>{turnPenaltyStartTime.toFixed(2)}s</span>
+                  </label>
+                  <input type="range" className="slider" min="0.0" max="1.0" step="0.01" value={turnPenaltyStartTime} onChange={(e) => setTurnPenaltyStartTime(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
+
+                  <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
+                    <span>Brake Full At (s)</span><span style={{ fontWeight: 'bold', color: '#f97316' }}>{turnPenaltyMaxTime.toFixed(2)}s</span>
+                  </label>
+                  <input type="range" className="slider" min="0.1" max="3.0" step="0.05" value={turnPenaltyMaxTime} onChange={(e) => setTurnPenaltyMaxTime(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
+
+                  <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
                     <span>Centripetal Grip</span><span style={{ fontWeight: 'bold' }}>{centripetalGrip.toFixed(2)}</span>
                   </label>
                   <input type="range" className="slider" min="0.0" max="1.0" step="0.05" value={centripetalGrip} onChange={(e) => setCentripetalGrip(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
@@ -338,6 +354,23 @@ export function Sidebar({ arenaLoaded }: { arenaLoaded: boolean }) {
                     <span>Whisker Speed Scale</span><span style={{ fontWeight: 'bold' }}>{whiskerScale.toFixed(2)}x</span>
                   </label>
                   <input type="range" className="slider" min="0.0" max="5.0" step="0.1" value={whiskerScale} onChange={(e) => setWhiskerScale(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
+
+                  <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
+                    <span>Trajectory Whisker (m)</span><span style={{ fontWeight: 'bold', color: '#f472b6' }}>{trajectoryWhiskerLength.toFixed(0)}</span>
+                  </label>
+                  <input type="range" className="slider" min="10" max="300" step="5" value={trajectoryWhiskerLength} onChange={(e) => setTrajectoryWhiskerLength(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
+
+                  <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
+                    <span>Stuck Timeout (s)</span><span style={{ fontWeight: 'bold', color: '#fb923c' }}>{stuckTimeout.toFixed(1)}s @ &lt;{stuckSpeedThreshold.toFixed(1)} m/s</span>
+                  </label>
+                  <input type="range" className="slider" min="1" max="15" step="0.5" value={stuckTimeout} onChange={(e) => setStuckTimeout(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.25rem' }} />
+                  <input type="range" className="slider" min="0.5" max="15" step="0.5" value={stuckSpeedThreshold} onChange={(e) => setStuckSpeedThreshold(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
+
+                  <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
+                    <span>Obstacle Oversteer</span><span style={{ fontWeight: 'bold', color: '#a78bfa' }}>{(obstacleOversteerChance * 100).toFixed(0)}%</span>
+                  </label>
+                  <input type="range" className="slider" min="0" max="0.3" step="0.01" value={obstacleOversteerChance} onChange={(e) => setObstacleOversteerChance(parseFloat(e.target.value))} style={{ width: '100%', marginBottom: '0.75rem' }} />
+
 
                   <label className="label" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
                     <span>Radar Size (m)</span><span style={{ fontWeight: 'bold' }}>{radarRadius.toFixed(0)}</span>

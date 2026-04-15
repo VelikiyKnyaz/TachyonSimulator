@@ -30,6 +30,7 @@ export function Boid({ id, index }: { id: string, index: number }) {
   const radialMeshRef = useRef<THREE.Mesh>(null);
   const coneMeshRef = useRef<THREE.Mesh>(null);
   const whiskersRef = useRef<THREE.LineSegments>(null);
+  const trajWhiskerRef = useRef<THREE.Line>(null);
   const { rapier, world } = useRapier();
   const prevNormal = useRef(new THREE.Vector3(0, 1, 0));
   const aiState = useRef<BoidState>('CRUISE');
@@ -50,6 +51,10 @@ export function Boid({ id, index }: { id: string, index: number }) {
   const stallRecoveryDir = useRef(new THREE.Vector3()); // Locked direction during stall recovery
   const stallCheckPos = useRef(new THREE.Vector3());    // Position at last displacement check
   const stallCheckTimer = useRef(0);     // Time since last displacement check
+  const turnTimer = useRef(0);           // How long the boid has been continuously turning
+  const stuckTimer = useRef(0);          // How long the boid has been below stuck speed threshold
+  const stuckCheckPos = useRef(new THREE.Vector3()); // Position snapshot for displacement check
+  const stuckCounter = useRef(0);        // Consecutive 1s windows of low displacement
   const respawning = useRef(false);
   const [isHovered, setIsHovered] = useState(false);
   
@@ -105,6 +110,11 @@ export function Boid({ id, index }: { id: string, index: number }) {
   const whiskerPositions = useMemo(() => new Float32Array(12 * 2 * 3), []);
   const whiskerColors = useMemo(() => new Float32Array(12 * 2 * 3), []);
 
+  // Trajectory Whisker Buffer Arrays (forward trajectory probe visualization)
+  const TRAJ_STEPS = 24;
+  const trajPositions = useMemo(() => new Float32Array((TRAJ_STEPS + 1) * 3), []);
+  const trajColors = useMemo(() => new Float32Array((TRAJ_STEPS + 1) * 3), []);
+
   useFrame((state, delta) => {
     if (!bodyRef.current) return;
     const body = bodyRef.current;
@@ -145,6 +155,10 @@ export function Boid({ id, index }: { id: string, index: number }) {
        evadeRetaliateId.current = null;
        trailBuffer.current = [];
        lifeTimer.current = 0;
+       turnTimer.current = 0;
+       stuckTimer.current = 0;
+       stuckCounter.current = 0;
+       stuckCheckPos.current.set(0, 0, 0);
        return;
     }
 
@@ -356,6 +370,36 @@ export function Boid({ id, index }: { id: string, index: number }) {
         console.log(`[DEATH] Boid ${id}: FELL OFF MAP (pos.y=${pos.y.toFixed(2)}, threshold=${fallThreshold.toFixed(2)})`);
         die(false);
         return;
+    }
+
+    // --- STUCK RECOVERY (Displacement-Based) ---
+    // Instead of checking speed (which includes gravity-bounce components and is unreliable),
+    // we measure ACTUAL DISPLACEMENT every 1 second. If the boid hasn't physically moved
+    // more than stuckSpeedThreshold meters in that window, it counts as a stuck tick.
+    // After stuckTimeout consecutive stuck ticks, force respawn.
+    if (hasLanded.current && lifeTimer.current >= 3.0) {
+        stuckTimer.current += delta;
+        if (stuckTimer.current >= 1.0) {
+            const displacement = Math.sqrt(
+                (pos.x - stuckCheckPos.current.x) ** 2 +
+                (pos.y - stuckCheckPos.current.y) ** 2 +
+                (pos.z - stuckCheckPos.current.z) ** 2
+            );
+            // If moved less than threshold meters in 1 second → stuck tick
+            if (displacement < settings.stuckSpeedThreshold) {
+                stuckCounter.current++;
+                if (stuckCounter.current >= settings.stuckTimeout) {
+                    console.log(`[DEATH] Boid ${id}: STUCK RECOVERY (displaced only ${displacement.toFixed(2)}m/s, stuck for ${stuckCounter.current}s)`);
+                    die(false);
+                    return;
+                }
+            } else {
+                stuckCounter.current = 0; // Moving fine — reset
+            }
+            // Snapshot current position for next window
+            stuckCheckPos.current.set(pos.x, pos.y, pos.z);
+            stuckTimer.current = 0;
+        }
     }
 
     // We judge AI flight performance against the maneuvering top speed (aerodynamic brake max), 
@@ -640,9 +684,316 @@ export function Boid({ id, index }: { id: string, index: number }) {
                     evadeTargetDir.current.normalize();
                 }
             }
-        } else {
-             // SAFE FROM TERRAIN!
+        }
+        
+        // --- OBSTACLE OVERSTEER (Edge Evasion) ---
+        // With a small probability, add a random extra rotation to the edge dodge direction.
+        // This creates variation in escape paths and helps unstick from tricky geometry.
+        if (edgeDanger && Math.random() < settings.obstacleOversteerChance) {
+            const extraAngle = Math.PI / 2; // Fixed 90° oversteer
+            const extraSign = Math.random() > 0.5 ? 1 : -1;
+            evadeTargetDir.current.applyAxisAngle(_surfaceNormal, extraAngle * extraSign);
+            evadeTargetDir.current.sub(_surfaceNormal.clone().multiplyScalar(
+                evadeTargetDir.current.dot(_surfaceNormal)
+            )).normalize();
+        }
+        
+        // ═══════════════════════════════════════════════════════════════
+        // ██ TRAJECTORY WHISKER — Forward Path Wall Detection ██
+        // ═══════════════════════════════════════════════════════════════
+        // TWO-PHASE detection:
+        //   Phase 1: FORWARD OBSTACLE RAY — casts directly along the heading to
+        //            detect surfaces perpendicular to the path (walls, ramps, lips).
+        //            Downward-only probes CANNOT see these because they face sideways.
+        //   Phase 2: TRAJECTORY SURFACE WALK — walks forward along surface curvature,
+        //            sampling normals. Detects walls via normal deviation from the boid's
+        //            current surface AND consecutive-step discontinuities.
+        // The boid steers away continuously while the wall remains in the predicted path.
+        let trajWallDetected = false;
+        let trajDodgeDir = new THREE.Vector3();
+        {
+            const trajLength = settings.trajectoryWhiskerLength;
+            const stepSize = trajLength / TRAJ_STEPS;
+            const trajElevation = Math.max(10.0, trajLength * 0.5);
+            
+            let walkPos = new THREE.Vector3(pos.x, pos.y, pos.z);
+            let walkDir = _targetDir.clone();
+            let prevStepNormal = _surfaceNormal.clone();
+            let wallStepIndex = -1;
+            let wallPoint = new THREE.Vector3();
+            const rootNormal = _surfaceNormal.clone(); // boid's current surface normal (immutable reference)
+            
+            // ── PHASE 1: FORWARD OBSTACLE RAY ──────────────────────────
+            // Cast a ray from the boid directly along its heading.
+            // This detects vertical walls, ramps, and obstacles that face the boid.
+            // Downward probes alone miss these because they can only see floors.
+            const fwdOffset = _surfaceNormal.clone().multiplyScalar(0.6);
+            const fwdOrigin = new THREE.Vector3(
+                pos.x + fwdOffset.x, pos.y + fwdOffset.y, pos.z + fwdOffset.z
+            );
+            const fwdRay = new rapier.Ray(fwdOrigin, {
+                x: _targetDir.x, y: _targetDir.y, z: _targetDir.z
+            });
+            const fwdHit = world.castRayAndGetNormal(
+                fwdRay, trajLength, true, undefined,
+                interactionGroups(0, [0]), undefined, body as any
+            );
+            if (fwdHit && fwdHit.collider) {
+                const fwdToi = (fwdHit as any).toi !== undefined
+                    ? (fwdHit as any).toi : (fwdHit as any).timeOfImpact;
+                if (typeof fwdToi === 'number' && !isNaN(fwdToi) && fwdToi < trajLength) {
+                    const fwdNormal = new THREE.Vector3(
+                        fwdHit.normal.x, fwdHit.normal.y, fwdHit.normal.z
+                    ).normalize();
+                    
+                    // Two conditions for wall:
+                    // 1. Surface FACES the boid (dot < -0.2 = blocking path, not parallel)
+                    // 2. Surface normal differs from boid's floor normal > crashTolerance
+                    const facingBoid = _targetDir.dot(fwdNormal) < -0.2;
+                    const angleDiff = fwdNormal.angleTo(rootNormal);
+                    
+                    if (facingBoid && !isNaN(angleDiff) && angleDiff > settings.crashTolerance) {
+                        trajWallDetected = true;
+                        wallStepIndex = Math.max(1, Math.round(fwdToi / stepSize));
+                        wallPoint.set(
+                            fwdOrigin.x + _targetDir.x * fwdToi,
+                            fwdOrigin.y + _targetDir.y * fwdToi,
+                            fwdOrigin.z + _targetDir.z * fwdToi
+                        );
+                    }
+                }
+            }
+            
+            // ── PHASE 2: TRAJECTORY SURFACE WALK ───────────────────────
+            // Fill first vertex of the trajectory visualization
+            trajPositions[0] = pos.x;
+            trajPositions[1] = pos.y;
+            trajPositions[2] = pos.z;
+            trajColors[0] = 0.0; trajColors[1] = 1.0; trajColors[2] = 0.5;
+            
+            for (let step = 1; step <= TRAJ_STEPS; step++) {
+                walkDir.sub(prevStepNormal.clone().multiplyScalar(walkDir.dot(prevStepNormal))).normalize();
+                walkPos.addScaledVector(walkDir, stepSize);
+                
+                const probeOrigin = new THREE.Vector3(
+                    walkPos.x, walkPos.y + trajElevation, walkPos.z
+                );
+                const probeRay = new rapier.Ray(probeOrigin, { x: 0, y: -1, z: 0 });
+                const probeMaxDist = trajElevation * 3.0 + stepSize * 2.0;
+                const probeResult = world.castRayAndGetNormal(
+                    probeRay, probeMaxDist, true, undefined,
+                    interactionGroups(0, [0]), undefined, body as any
+                );
+                
+                let stepNormal = prevStepNormal.clone();
+                let hitSurface = false;
+                
+                if (probeResult && probeResult.collider) {
+                    const hn = new THREE.Vector3(
+                        probeResult.normal.x, probeResult.normal.y, probeResult.normal.z
+                    ).normalize();
+                    
+                    // Accept ANY surface that's not a ceiling (y > -0.1)
+                    // Previously filtering y > 0.2 meant WALLS WERE INVISIBLE to the whisker!
+                    if (hn.y > -0.1) {
+                        stepNormal = hn;
+                        hitSurface = true;
+                        const hitToi = (probeResult as any).toi !== undefined
+                            ? (probeResult as any).toi : (probeResult as any).timeOfImpact;
+                        if (typeof hitToi === 'number' && !isNaN(hitToi)) {
+                            walkPos.y = probeOrigin.y - hitToi;
+                        }
+                    }
+                }
+                
+                // Fill visualization vertex
+                const vIdx = step * 3;
+                trajPositions[vIdx] = walkPos.x;
+                trajPositions[vIdx + 1] = walkPos.y;
+                trajPositions[vIdx + 2] = walkPos.z;
+                
+                // ── WALL DETECTION (only if Phase 1 hasn't already found one) ──
+                if (wallStepIndex === -1 && hitSurface) {
+                    // Check 1: Consecutive step discontinuity (sharp mesh face boundary)
+                    const normalDelta = stepNormal.angleTo(prevStepNormal);
+                    // Check 2: Accumulated deviation from boid's current surface normal
+                    // A surface whose normal deviates greatly from the boid's floor AND
+                    // is nearly vertical (y < 0.4) indicates a wall/obstacle
+                    const normalFromRoot = stepNormal.angleTo(rootNormal);
+                    const isVerticalSurface = stepNormal.y < 0.4;
+                    
+                    if (!isNaN(normalDelta) && normalDelta > settings.crashTolerance) {
+                        // Sharp face boundary — classic wall
+                        wallStepIndex = step;
+                        wallPoint.copy(walkPos);
+                        trajWallDetected = true;
+                    } else if (!isNaN(normalFromRoot) && normalFromRoot > settings.crashTolerance 
+                               && isVerticalSurface) {
+                        // Surface ahead is steep/vertical AND deviates from boid's floor
+                        // This catches gradual transitions to vertical walls that no
+                        // single consecutive-step comparison catches
+                        wallStepIndex = step;
+                        wallPoint.copy(walkPos);
+                        trajWallDetected = true;
+                    }
+                } else if (wallStepIndex === -1 && !hitSurface) {
+                    // No surface at all — cliff/void
+                    wallStepIndex = step;
+                    wallPoint.copy(walkPos);
+                    trajWallDetected = true;
+                }
+                
+                // Color: green if before wall, red if at/after wall
+                if (wallStepIndex !== -1 && step >= wallStepIndex) {
+                    trajColors[vIdx] = 1.0; trajColors[vIdx + 1] = 0.15; trajColors[vIdx + 2] = 0.1;
+                } else {
+                    const t = step / TRAJ_STEPS;
+                    trajColors[vIdx] = t * 0.8;
+                    trajColors[vIdx + 1] = 1.0 - t * 0.3;
+                    trajColors[vIdx + 2] = 0.5 - t * 0.4;
+                }
+                
+                if (hitSurface) {
+                    prevStepNormal = stepNormal;
+                }
+            }
+            
+            // ── DODGE DIRECTION DETERMINATION ──────────────────────────
+            if (trajWallDetected && !edgeDanger) {
+                const leftDir = walkDir.clone().applyAxisAngle(_surfaceNormal, Math.PI / 2).normalize();
+                const rightDir = walkDir.clone().applyAxisAngle(_surfaceNormal, -Math.PI / 2).normalize();
+                
+                const wallDist = wallStepIndex * stepSize;
+                const lateralProbe = Math.max(stepSize * 3, wallDist * 0.5);
+                const probeHeight = Math.max(10.0, lateralProbe * 0.8);
+                
+                // Probe LEFT
+                const leftOrigin = new THREE.Vector3(
+                    pos.x + leftDir.x * lateralProbe,
+                    pos.y + probeHeight,
+                    pos.z + leftDir.z * lateralProbe
+                );
+                const leftRay = new rapier.Ray(leftOrigin, { x: 0, y: -1, z: 0 });
+                const leftResult = world.castRayAndGetNormal(
+                    leftRay, probeHeight * 3.0, true, undefined,
+                    interactionGroups(0, [0]), undefined, body as any
+                );
+                let leftValid = false;
+                let leftNormalDev = Infinity;
+                if (leftResult && leftResult.collider) {
+                    const ln = new THREE.Vector3(leftResult.normal.x, leftResult.normal.y, leftResult.normal.z);
+                    if (ln.y > 0.2) {
+                        leftValid = true;
+                        leftNormalDev = ln.angleTo(rootNormal);
+                    }
+                }
+                
+                // Also cast a FORWARD ray from the LEFT to check if left path is clear
+                if (leftValid) {
+                    const leftFwdOrigin = new THREE.Vector3(
+                        pos.x + leftDir.x * lateralProbe * 0.5 + fwdOffset.x,
+                        pos.y + fwdOffset.y,
+                        pos.z + leftDir.z * lateralProbe * 0.5 + fwdOffset.z
+                    );
+                    const leftFwdRay = new rapier.Ray(leftFwdOrigin, {
+                        x: _targetDir.x, y: _targetDir.y, z: _targetDir.z
+                    });
+                    const leftFwdHit = world.castRay(
+                        leftFwdRay, wallDist, true, undefined,
+                        interactionGroups(0, [0]), undefined, body as any
+                    );
+                    if (leftFwdHit && leftFwdHit.collider) {
+                        const lft = (leftFwdHit as any).toi !== undefined
+                            ? (leftFwdHit as any).toi : (leftFwdHit as any).timeOfImpact;
+                        if (typeof lft === 'number' && lft < wallDist * 0.5) {
+                            leftValid = false; // Left path ALSO blocked
+                        }
+                    }
+                }
+                
+                // Probe RIGHT
+                const rightOrigin = new THREE.Vector3(
+                    pos.x + rightDir.x * lateralProbe,
+                    pos.y + probeHeight,
+                    pos.z + rightDir.z * lateralProbe
+                );
+                const rightRay = new rapier.Ray(rightOrigin, { x: 0, y: -1, z: 0 });
+                const rightResult = world.castRayAndGetNormal(
+                    rightRay, probeHeight * 3.0, true, undefined,
+                    interactionGroups(0, [0]), undefined, body as any
+                );
+                let rightValid = false;
+                let rightNormalDev = Infinity;
+                if (rightResult && rightResult.collider) {
+                    const rn = new THREE.Vector3(rightResult.normal.x, rightResult.normal.y, rightResult.normal.z);
+                    if (rn.y > 0.2) {
+                        rightValid = true;
+                        rightNormalDev = rn.angleTo(rootNormal);
+                    }
+                }
+                
+                // Also cast a FORWARD ray from the RIGHT to check if right path is clear
+                if (rightValid) {
+                    const rightFwdOrigin = new THREE.Vector3(
+                        pos.x + rightDir.x * lateralProbe * 0.5 + fwdOffset.x,
+                        pos.y + fwdOffset.y,
+                        pos.z + rightDir.z * lateralProbe * 0.5 + fwdOffset.z
+                    );
+                    const rightFwdRay = new rapier.Ray(rightFwdOrigin, {
+                        x: _targetDir.x, y: _targetDir.y, z: _targetDir.z
+                    });
+                    const rightFwdHit = world.castRay(
+                        rightFwdRay, wallDist, true, undefined,
+                        interactionGroups(0, [0]), undefined, body as any
+                    );
+                    if (rightFwdHit && rightFwdHit.collider) {
+                        const rft = (rightFwdHit as any).toi !== undefined
+                            ? (rightFwdHit as any).toi : (rightFwdHit as any).timeOfImpact;
+                        if (typeof rft === 'number' && rft < wallDist * 0.5) {
+                            rightValid = false; // Right path ALSO blocked
+                        }
+                    }
+                }
+                
+                if (leftValid && rightValid) {
+                    trajDodgeDir.copy(leftNormalDev <= rightNormalDev ? leftDir : rightDir);
+                } else if (leftValid) {
+                    trajDodgeDir.copy(leftDir);
+                } else if (rightValid) {
+                    trajDodgeDir.copy(rightDir);
+                } else {
+                    trajDodgeDir.copy(walkDir).negate();
+                }
+                
+                trajDodgeDir.sub(_surfaceNormal.clone().multiplyScalar(trajDodgeDir.dot(_surfaceNormal)));
+                if (trajDodgeDir.lengthSq() > 0.001) {
+                    trajDodgeDir.normalize();
+                } else {
+                    trajDodgeDir.copy(walkDir).negate().normalize();
+                }
+                
+                // --- OBSTACLE OVERSTEER (Trajectory Whisker) ---
+                // With a small probability, add a random extra rotation to the wall dodge.
+                // Creates varied escape paths and helps break out of geometry traps.
+                if (Math.random() < settings.obstacleOversteerChance) {
+                    const extraAngle = Math.PI / 2; // Fixed 90° oversteer
+                    const extraSign = Math.random() > 0.5 ? 1 : -1;
+                    trajDodgeDir.applyAxisAngle(_surfaceNormal, extraAngle * extraSign);
+                    trajDodgeDir.sub(_surfaceNormal.clone().multiplyScalar(
+                        trajDodgeDir.dot(_surfaceNormal)
+                    )).normalize();
+                }
+            }
+        }
+        
+        if (!edgeDanger) {
+             // SAFE FROM TERRAIN EDGES!
              jinkTimer.current = 0; // Reset cliff escape lock
+             
+             // Trajectory whisker wall dodge is applied AFTER the state machine
+             // as a steering safety layer, not as a state blocker.
+             // This allows HUNT transitions even when a wall is detected ahead,
+             // because the hunt direction might naturally avoid the wall.
              
              // --- BULLET EVASION / COUNTER-ATTACK (CPA-Based Threat Detection) ---
              // Use Closest Point of Approach (CPA) math instead of direction alignment.
@@ -766,7 +1117,7 @@ export function Boid({ id, index }: { id: string, index: number }) {
                      evadeRetaliateId.current = null;
                  }
              } else if (aiState.current === 'EVADE' && !bulletDanger) {
-                 // Timer already expired and no active threat — safe to exit
+                 // Timer already expired, no active threat — safe to exit
                  aiState.current = 'CRUISE';
              }
 
@@ -981,11 +1332,55 @@ export function Boid({ id, index }: { id: string, index: number }) {
         _idealDir.sub(_surfaceNormal.clone().multiplyScalar(_idealDir.dot(_surfaceNormal))).normalize();
         _targetDir.sub(_surfaceNormal.clone().multiplyScalar(_targetDir.dot(_surfaceNormal))).normalize();
 
+        // --- TRAJECTORY WHISKER WALL SAFETY (Post-State-Machine Steering Layer) ---
+        // After the state machine has decided _idealDir (HUNT target, CRUISE, EVADE, etc.),
+        // check if that direction would lead INTO the detected wall.
+        // If so, override with the dodge direction. If the state machine's direction
+        // naturally avoids the wall (e.g., hunt target is away from wall), let it through.
+        if (trajWallDetected && !edgeDanger) {
+            // Check: does _idealDir point toward the wall or away from it?
+            // Use the dot product between _idealDir and trajDodgeDir.
+            // If _idealDir aligns with the dodge direction (dot > 0), it's already safe.
+            // If _idealDir opposes the dodge direction (dot < 0), it's heading toward the wall.
+            const safeAlignment = _idealDir.dot(trajDodgeDir);
+            if (safeAlignment < 0.2) {
+                // _idealDir is heading toward the wall — override with dodge
+                _idealDir.copy(trajDodgeDir);
+                // Re-project onto tangent plane after override
+                _idealDir.sub(_surfaceNormal.clone().multiplyScalar(_idealDir.dot(_surfaceNormal))).normalize();
+            }
+        }
+
         let newVel = new THREE.Vector3(rawVel.x, rawVel.y, rawVel.z);
         let hasVelChange = false;
 
         // "Action of Turning": The physical penalty strictly applied when the AI aggressively steers the vehicle's nose
         const turnStress = 1.0 - Math.max(0, _targetDir.dot(_idealDir)); 
+
+        // --- TIME-BASED TURN PENALTY ---
+        // Short, quick turns (evasion jinks, small corrections) are FREE.
+        // Only sustained turning accumulates penalty over time.
+        //   turnTimer < startTime → no penalty (grace period)
+        //   turnTimer > maxTime  → full penalty
+        //   in between           → linear ramp
+        const isTurning = turnStress > 0.01;
+        if (isTurning) {
+            turnTimer.current += delta;
+        } else {
+            turnTimer.current = 0; // Reset when not turning
+        }
+        
+        let turnTimeScalar = 0.0; // 0 = no time penalty, 1 = full time penalty
+        const startT = settings.turnPenaltyStartTime;
+        const maxT = settings.turnPenaltyMaxTime;
+        if (turnTimer.current > startT) {
+            const timeRange = maxT - startT;
+            if (timeRange > 0.001) {
+                turnTimeScalar = Math.min(1.0, (turnTimer.current - startT) / timeRange);
+            } else {
+                turnTimeScalar = 1.0;
+            }
+        }
 
         // Calculate speed-gated penalty scalar (0.0 to 1.0)
         let penaltySpeedScalar = 0.0;
@@ -996,10 +1391,10 @@ export function Boid({ id, index }: { id: string, index: number }) {
             penaltySpeedScalar = speed >= settings.turnPenaltyMaxSpeed ? 1.0 : 0.0;
         }
 
-        // If the boid is actively executing an AI turning command
-        if (turnStress > 0.01 && penaltySpeedScalar > 0.001) {
-            // Penalization scales with both User's multiplier and the boid's current velocity
-            const penaltyStrength = settings.turnPenalty * 0.8 * penaltySpeedScalar; 
+        // If the boid is actively executing an AI turning command AND has been turning long enough
+        if (isTurning && penaltySpeedScalar > 0.001 && turnTimeScalar > 0.001) {
+            // penaltyStrength now incorporates time ramp: short turns = near-zero, long = full
+            const penaltyStrength = settings.turnPenalty * 0.8 * penaltySpeedScalar * turnTimeScalar; 
             
             // Turn penalty applies to ALL states — there is NO free turning.
             // Evasion must pay the same physics cost as any other maneuver.
@@ -1091,6 +1486,28 @@ export function Boid({ id, index }: { id: string, index: number }) {
                 }
             } else {
                 whiskersRef.current.visible = false;
+            }
+        }
+
+        // --- TRAJECTORY WHISKER VISUALIZER ---
+        if (trajWhiskerRef.current) {
+            if (settings.showRadars) {
+                trajWhiskerRef.current.visible = true;
+                
+                if (!trajWhiskerRef.current.geometry.hasAttribute('position')) {
+                    trajWhiskerRef.current.geometry.setAttribute('position', new THREE.BufferAttribute(trajPositions, 3));
+                    trajWhiskerRef.current.geometry.setAttribute('color', new THREE.BufferAttribute(trajColors, 3));
+                } else {
+                    const tjPosAttr = trajWhiskerRef.current.geometry.getAttribute('position') as THREE.BufferAttribute;
+                    tjPosAttr.set(trajPositions);
+                    tjPosAttr.needsUpdate = true;
+                    
+                    const tjColAttr = trajWhiskerRef.current.geometry.getAttribute('color') as THREE.BufferAttribute;
+                    tjColAttr.set(trajColors);
+                    tjColAttr.needsUpdate = true;
+                }
+            } else {
+                trajWhiskerRef.current.visible = false;
             }
         }
 
@@ -1317,6 +1734,12 @@ export function Boid({ id, index }: { id: string, index: number }) {
          <bufferGeometry />
          <lineBasicMaterial vertexColors={true} linewidth={2} transparent opacity={0.6} />
       </lineSegments>
+
+      {/* Trajectory Forward Whisker Visualizer */}
+      <line ref={trajWhiskerRef} visible={false}>
+         <bufferGeometry />
+         <lineBasicMaterial vertexColors={true} linewidth={3} transparent opacity={0.85} />
+      </line>
 
       {/* Target Arrow and Name Tags (outside RigidBody) */} 
       <arrowHelper 

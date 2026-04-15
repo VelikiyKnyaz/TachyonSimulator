@@ -83,6 +83,8 @@ interface SimulationStore {
   baseFriction: number;
   turnPenaltyMinSpeed: number;
   turnPenaltyMaxSpeed: number;
+  turnPenaltyStartTime: number;
+  turnPenaltyMaxTime: number;
 
   // --- New Advanced Parameters ---
   showNoses: boolean;
@@ -107,6 +109,10 @@ interface SimulationStore {
   radarFrontalAngle: number;
   initialSpeed: number;
   huntMinSpeed: number;
+  trajectoryWhiskerLength: number;
+  stuckSpeedThreshold: number;
+  stuckTimeout: number;
+  obstacleOversteerChance: number;
 
   setAgentCount: (count: number) => void;
   setSpawnPoint: (index: number, pos: Vec3) => void;
@@ -133,6 +139,8 @@ interface SimulationStore {
   setBaseFriction: (v: number) => void;
   setTurnPenaltyMinSpeed: (v: number) => void;
   setTurnPenaltyMaxSpeed: (v: number) => void;
+  setTurnPenaltyStartTime: (v: number) => void;
+  setTurnPenaltyMaxTime: (v: number) => void;
 
   setDebugSize: (v: number) => void;
   setMotorPower: (v: number) => void;
@@ -150,6 +158,10 @@ interface SimulationStore {
   setRadarFrontalAngle: (v: number) => void;
   setInitialSpeed: (v: number) => void;
   setHuntMinSpeed: (v: number) => void;
+  setTrajectoryWhiskerLength: (v: number) => void;
+  setStuckSpeedThreshold: (v: number) => void;
+  setStuckTimeout: (v: number) => void;
+  setObstacleOversteerChance: (v: number) => void;
 
   startSimulation: () => void;
   resetSimulation: () => void;
@@ -193,6 +205,8 @@ export const useSimulationStore = create<SimulationStore>((set) => ({
   baseFriction: 2.0,
   turnPenaltyMinSpeed: 20.0,
   turnPenaltyMaxSpeed: 70.0,
+  turnPenaltyStartTime: 0.15,   // Seconds of continuous turning before penalty begins
+  turnPenaltyMaxTime: 0.8,     // Seconds of turning at which penalty reaches full strength
 
   showNoses: false,
   showStateLabels: true,
@@ -216,6 +230,10 @@ export const useSimulationStore = create<SimulationStore>((set) => ({
   radarFrontalAngle: 0.866,  // cos(30°) → 60° full cone
   initialSpeed: 50.0,
   huntMinSpeed: 25.0,          // Minimum forward speed to enter/stay in HUNT mode
+  trajectoryWhiskerLength: 80.0, // Forward trajectory probe distance in meters
+  stuckSpeedThreshold: 3.0,      // m/s (~10 km/h) — below this considered stuck
+  stuckTimeout: 5.0,             // Seconds stuck before forced respawn
+  obstacleOversteerChance: 0.05, // Probability per-frame of random extra obstacle turn
 
   setAgentCount: (count) => set((state) => ({
     agentCount: count,
@@ -249,6 +267,8 @@ export const useSimulationStore = create<SimulationStore>((set) => ({
   setBaseFriction: (v: number) => set({ baseFriction: v }),
   setTurnPenaltyMinSpeed: (v: number) => set({ turnPenaltyMinSpeed: v }),
   setTurnPenaltyMaxSpeed: (v: number) => set({ turnPenaltyMaxSpeed: v }),
+  setTurnPenaltyStartTime: (v: number) => set({ turnPenaltyStartTime: v }),
+  setTurnPenaltyMaxTime: (v: number) => set({ turnPenaltyMaxTime: v }),
 
   setDebugSize: (v) => set({ debugSize: v }),
   setMotorPower: (v) => set({ motorPower: v }),
@@ -266,6 +286,10 @@ export const useSimulationStore = create<SimulationStore>((set) => ({
   setRadarFrontalAngle: (v) => set({ radarFrontalAngle: v }),
   setInitialSpeed: (v) => set({ initialSpeed: v }),
   setHuntMinSpeed: (v) => set({ huntMinSpeed: v }),
+  setTrajectoryWhiskerLength: (v) => set({ trajectoryWhiskerLength: v }),
+  setStuckSpeedThreshold: (v) => set({ stuckSpeedThreshold: v }),
+  setStuckTimeout: (v) => set({ stuckTimeout: v }),
+  setObstacleOversteerChance: (v) => set({ obstacleOversteerChance: v }),
 
   toggleCurvature: () => set((state) => ({ showCurvature: !state.showCurvature })),
   toggleNoses: () => set((state) => ({ showNoses: !state.showNoses })),
